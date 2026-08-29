@@ -32,7 +32,7 @@ import feedparser
 import httpx
 from loguru import logger
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 CACHE_DB = PROJECT_ROOT / "data" / "storage" / "news_cache.db"

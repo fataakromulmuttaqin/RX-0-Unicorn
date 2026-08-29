@@ -298,23 +298,6 @@ def monitor():
         logger.info(f"  📈 Trailing stops updated on {trailed} position(s)")
     return closed
 
-def refresh_news_sentiment():
-    """Refresh news + sentiment cache every hour."""
-    try:
-        from data.fetchers.news import fetch_all_news
-        from data.fetchers.sentiment import get_market_sentiment_summary
-        # Fetch news (will cache for 30min)
-        articles = fetch_all_news(force_refresh=False)
-        high = [a for a in articles if a["impact_level"] == "high"]
-        logger.info(f"📰 News refreshed: {len(articles)} articles ({len(high)} high impact)")
-        # Refresh market sentiment (Fear & Greed)
-        mkt = get_market_sentiment_summary()
-        if mkt.get("fear_greed"):
-            fg = mkt["fear_greed"]
-            logger.info(f"📊 Market sentiment: {fg['value']}/100 ({fg['classification']})")
-    except Exception as e:
-        logger.error(f"news/sentiment refresh error: {e}")
-
 
 def send_daily_digest_if_needed():
     now = datetime.now(timezone.utc)
@@ -414,10 +397,6 @@ while not shutdown_requested and not STOP_FILE.exists():
 
         # === DAILY DIGEST ===
         send_daily_digest_if_needed()
-
-        # === NEWS+SENTIMENT REFRESH (every 1 hour = 360 cycles of 10s) ===
-        if cycle % 360 == 0 and cycle > 0:
-            refresh_news_sentiment()
 
         # === STATUS every ~5 min (30 cycles of 10s) ===
         if cycle % 30 == 0:

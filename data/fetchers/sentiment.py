@@ -21,7 +21,7 @@ from datetime import datetime, timezone, timedelta
 import httpx
 from loguru import logger
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 CACHE_DB = PROJECT_ROOT / "data" / "storage" / "sentiment_cache.db"
@@ -98,6 +98,9 @@ def fetch_lunarcrush(symbol: str) -> dict[str, Any] | None:
     if cached:
         return cached
 
+    if not _check_rate_limit():
+        return None
+
     # Convert BTC/USDT -> BTC for LunarCrush
     coin = symbol.split("/")[0]
     try:
@@ -131,65 +134,160 @@ def fetch_lunarcrush(symbol: str) -> dict[str, Any] | None:
         return None
 
 
+# Cache for batch fetch
+_batch_cache: dict[str, Any] = {"data": None, "fetched_at": 0}
+_BATCH_TTL_SECONDS = 3600  # 1 hour
+
+# Rate limiter for ALL external API calls (token bucket, conservative)
+_api_call_log: list[float] = []
+_API_RATE_LIMIT = 10  # max calls per minute (CoinGecko free tier)
+_RATE_WINDOW = 60.0  # seconds
+
+
+def _check_rate_limit() -> bool:
+    """
+    Simple sliding window rate limiter.
+    Returns True if OK to call, False if should wait.
+    """
+    global _api_call_log
+    now = time.time()
+    # Drop old entries
+    _api_call_log = [t for t in _api_call_log if now - t < _RATE_WINDOW]
+    if len(_api_call_log) >= _API_RATE_LIMIT:
+        wait_time = _RATE_WINDOW - (now - _api_call_log[0])
+        logger.warning(f"⏸ Rate limit hit ({len(_api_call_log)} calls/{_RATE_WINDOW}s). Wait {wait_time:.0f}s")
+        return False
+    _api_call_log.append(now)
+    return True
+
+
 # -----------------------------------------------------------------------------
-# Source 2: CoinGecko market data (free, no auth — always available)
+# Source 2: CoinGecko batch market data (1 call for all coins, free)
+# -----------------------------------------------------------------------------
+def fetch_coingecko_batch(symbols: list[str] | None = None) -> dict[str, dict[str, Any]] | None:
+    """
+    Batch fetch market data for multiple coins in ONE call.
+    Uses CoinGecko /coins/markets endpoint (free, 10-30 calls/min, ~250 coins per call).
+
+    Returns: dict of symbol -> market data, or None on failure.
+    """
+    global _batch_cache
+    # Check cache first
+    if _batch_cache["data"] and (time.time() - _batch_cache["fetched_at"]) < _BATCH_TTL_SECONDS:
+        return _batch_cache["data"]
+
+    if symbols is None:
+        # Default: load from watchlist
+        try:
+            from data.fetchers.sentiment import _symbol_to_coingecko_id
+        except ImportError:
+            _symbol_to_coingecko_id = None
+        if _symbol_to_coingecko_id:
+            # Build IDs from our watchlist
+            import json
+            with open(PROJECT_ROOT / "data" / "pairs" / "watchlist.json") as f:
+                wl = json.load(f)
+            all_pairs = [p for tier in wl.values() for p in tier]
+            ids = []
+            for p in all_pairs:
+                cg_id = _symbol_to_coingecko_id(p)
+                if cg_id:
+                    ids.append(cg_id)
+            ids = list(set(ids))  # dedupe
+        else:
+            ids = ["bitcoin", "ethereum", "solana"]
+    else:
+        # Convert symbols to CoinGecko IDs
+        from data.fetchers.sentiment import _symbol_to_coingecko_id
+        ids = []
+        for s in symbols:
+            cg_id = _symbol_to_coingecko_id(s)
+            if cg_id:
+                ids.append(cg_id)
+        ids = list(set(ids))
+
+    if not ids:
+        return None
+
+    # Rate limit check
+    if not _check_rate_limit():
+        logger.warning("CoinGecko batch skipped: rate limit")
+        return _batch_cache["data"]  # return stale
+
+    # Single API call for all coins (max 250 per call, we have 50ish)
+    try:
+        r = httpx.get(
+            "https://api.coingecko.com/api/v3/coins/markets",
+            params={
+                "vs_currency": "usd",
+                "ids": ",".join(ids[:250]),  # API limit
+                "price_change_percentage": "1h,24h,7d,30d",
+                "per_page": 250,
+            },
+            timeout=15,
+        )
+        if r.status_code != 200:
+            logger.warning(f"CoinGecko batch: HTTP {r.status_code}")
+            return _batch_cache["data"]  # return stale if available
+        coins = r.json()
+        if not isinstance(coins, list):
+            return _batch_cache["data"]
+
+        result = {}
+        for c in coins:
+            symbol = c.get("symbol", "").upper()
+            if not symbol:
+                continue
+            price_change_7d = float(c.get("price_change_percentage_7d_in_currency") or 0)
+            sentiment_implied = max(0, min(100, 50 + price_change_7d * 2))
+            result[f"{symbol}/USDT"] = {
+                "source": "coingecko_market",
+                "symbol": f"{symbol}/USDT",
+                "fetched_at": int(time.time()),
+                "price_usd": float(c.get("current_price", 0)),
+                "price_change_1h_pct": float(c.get("price_change_percentage_1h_in_currency") or 0),
+                "price_change_24h_pct": float(c.get("price_change_percentage_24h_in_currency") or 0),
+                "price_change_7d_pct": price_change_7d,
+                "price_change_30d_pct": float(c.get("price_change_percentage_30d_in_currency") or 0),
+                "market_cap_usd": float(c.get("market_cap", 0) or 0),
+                "volume_24h_usd": float(c.get("total_volume", 0) or 0),
+                "turnover_pct": (float(c.get("total_volume", 0) or 0) / float(c.get("market_cap", 1) or 1)) * 100,
+                "sentiment_implied": sentiment_implied,
+            }
+        _batch_cache["data"] = result
+        _batch_cache["fetched_at"] = time.time()
+        logger.info(f"📊 CoinGecko batch: {len(result)} coins in 1 call (cached 1h)")
+        return result
+    except Exception as e:
+        logger.debug(f"CoinGecko batch error: {e}")
+        return _batch_cache["data"]  # return stale if available
+
+
+# -----------------------------------------------------------------------------
+# Per-symbol getter (uses batch cache)
 # -----------------------------------------------------------------------------
 def fetch_coingecko_market(symbol: str) -> dict[str, Any] | None:
     """
-    Fetch market metrics from CoinGecko /coins/{id} endpoint.
-    Free tier: market data only (community data moved to paid).
-    Used for: price change %, market cap, volume trend (proxy for sentiment).
+    Get market data for a single symbol from the batch cache.
+    Trigger batch fetch if cache empty/expired.
     """
-    cached = _cache_get(symbol, "coingecko_market")
+    # Check per-symbol cache first
+    cached = _cache_get(symbol, "coingecko_market", ttl_hours=24)
     if cached:
         return cached
 
-    coin_id = _symbol_to_coingecko_id(symbol)
-    if not coin_id:
+    # Ensure batch is loaded
+    batch = fetch_coingecko_batch()
+    if not batch:
         return None
 
-    try:
-        r = httpx.get(
-            f"https://api.coingecko.com/api/v3/coins/{coin_id}",
-            params={"localization": "false", "tickers": "false", "community_data": "false", "developer_data": "false"},
-            timeout=10,
-        )
-        if r.status_code != 200:
-            logger.debug(f"CoinGecko {coin_id}: HTTP {r.status_code}")
-            return None
-        data = r.json()
-        market = data.get("market_data", {})
-        price_change_24h = float(market.get("price_change_percentage_24h") or 0)
-        price_change_7d = float(market.get("price_change_percentage_7d") or 0)
-        price_change_30d = float(market.get("price_change_percentage_30d") or 0)
-        market_cap = float((market.get("market_cap") or {}).get("usd") or 0)
-        total_volume = float((market.get("total_volume") or {}).get("usd") or 0)
-        # Volume / Market Cap = turnover ratio (proxy for activity)
-        turnover_pct = (total_volume / market_cap * 100) if market_cap > 0 else 0
-
-        # Implied sentiment from price action: 24h momentum
-        # 50 = neutral, >50 = bullish, <50 = bearish
-        # Use 7d change with smoothing
-        sentiment_implied = 50 + (price_change_7d * 2)  # 7d change of +5% → 60 sentiment
-        sentiment_implied = max(0, min(100, sentiment_implied))
-
-        result = {
-            "source": "coingecko_market",
-            "symbol": symbol,
-            "fetched_at": int(time.time()),
-            "price_change_24h_pct": price_change_24h,
-            "price_change_7d_pct": price_change_7d,
-            "price_change_30d_pct": price_change_30d,
-            "market_cap_usd": market_cap,
-            "volume_24h_usd": total_volume,
-            "turnover_pct": turnover_pct,
-            "sentiment_implied": sentiment_implied,
-        }
-        _cache_set(symbol, "coingecko_market", result)
-        return result
-    except Exception as e:
-        logger.debug(f"CoinGecko {coin_id}: {e}")
-        return None
+    # Find symbol in batch
+    data = batch.get(symbol.upper())
+    if data:
+        # Cache per-symbol
+        _cache_set(symbol, "coingecko_market", data)
+        return data
+    return None
 
 
 # Symbol → CoinGecko ID mapping (most common ones)
@@ -228,6 +326,9 @@ def fetch_fear_greed() -> dict[str, Any] | None:
     cached = _cache_get("MARKET", "fear_greed")
     if cached:
         return cached
+
+    if not _check_rate_limit():
+        return None
 
     try:
         r = httpx.get(
