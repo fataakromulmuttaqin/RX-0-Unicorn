@@ -246,6 +246,55 @@ def handle_command(bot: TelegramBot, chat_id: str, cmd: str) -> str | None:
     elif cmd in ("weekly",):
         return "📈 Weekly report generation — run `python main.py paper weekly-report`"
 
+    elif cmd in ("news", "n"):
+        # Fetch and format recent news
+        try:
+            from data.fetchers.news import (
+                fetch_all_news, format_news_for_telegram, get_today_news
+            )
+            articles = fetch_all_news()
+            if len(cmd.split()) > 1 and cmd.split()[1].isdigit():
+                # /rx0 news N
+                pass
+            return format_news_for_telegram(articles, max_items=12)
+        except Exception as e:
+            return f"❌ News fetch error: {e}"
+
+    elif cmd.startswith("news "):
+        # /rx0 news BTC,ETH
+        try:
+            from data.fetchers.news import get_today_news, format_news_for_telegram
+            _, coin_arg = cmd.split(" ", 1)
+            currencies = [c.strip().upper() for c in coin_arg.split(",")]
+            articles = get_today_news(currencies=currencies)
+            if not articles:
+                return f"📰 No news for {', '.join(currencies)} in last 24h."
+            return format_news_for_telegram(articles, max_items=10)
+        except Exception as e:
+            return f"❌ News fetch error: {e}"
+
+    elif cmd in ("sentiment", "senti"):
+        # Market-wide sentiment
+        try:
+            from data.fetchers.sentiment import get_market_sentiment_summary, format_market_sentiment
+            mkt = get_market_sentiment_summary()
+            return format_market_sentiment(mkt)
+        except Exception as e:
+            return f"❌ Sentiment error: {e}"
+
+    elif cmd.startswith("sentiment "):
+        # /rx0 sentiment BTC/USDT
+        try:
+            from data.fetchers.sentiment import get_sentiment_for_symbol, format_symbol_sentiment
+            _, sym_arg = cmd.split(" ", 1)
+            symbol = sym_arg.strip().upper()
+            if "/" not in symbol:
+                symbol += "/USDT"
+            data = get_sentiment_for_symbol(symbol)
+            return format_symbol_sentiment(data)
+        except Exception as e:
+            return f"❌ Sentiment error: {e}"
+
     else:
         return f"❓ Unknown command: {cmd}\n\n{get_help_text()}"
 
