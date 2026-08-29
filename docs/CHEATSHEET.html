@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<title>RX-0 Unicorn — Cheat Sheet</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'SF Mono', 'Monaco', 'Inconsolata', monospace;
+    background: #0a0e1a;
+    color: #e0e6f0;
+    padding: 24px;
+    line-height: 1.5;
+  }
+  .container { max-width: 1200px; margin: 0 auto; }
+  h1 {
+    color: #00ffd5;
+    font-size: 32px;
+    border-bottom: 2px solid #00ffd5;
+    padding-bottom: 8px;
+    margin-bottom: 8px;
+  }
+  .subtitle { color: #6c7a8c; font-size: 14px; margin-bottom: 24px; }
+  h2 {
+    color: #ff6b9d;
+    font-size: 22px;
+    margin: 24px 0 12px;
+    padding-left: 12px;
+    border-left: 4px solid #ff6b9d;
+  }
+  h3 { color: #ffd166; font-size: 16px; margin: 16px 0 8px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+  .card {
+    background: #131927;
+    border: 1px solid #1f2940;
+    border-radius: 8px;
+    padding: 16px;
+  }
+  .card.highlight { border-color: #00ffd5; box-shadow: 0 0 12px rgba(0,255,213,0.15); }
+  .label { color: #6c7a8c; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
+  .value { color: #e0e6f0; font-size: 14px; margin-top: 4px; }
+  .value.up { color: #00ff88; }
+  .value.down { color: #ff4757; }
+  .value.neutral { color: #ffd166; }
+  table { width: 100%; border-collapse: collapse; margin: 8px 0; }
+  th { text-align: left; color: #6c7a8c; font-size: 11px; text-transform: uppercase; padding: 6px 8px; border-bottom: 1px solid #1f2940; }
+  td { padding: 8px; border-bottom: 1px solid #1f2940; font-size: 13px; }
+  td.sym { color: #00ffd5; font-weight: bold; width: 50px; }
+  .legend {
+    display: flex; flex-wrap: wrap; gap: 16px; margin: 8px 0;
+  }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+  .swatch { width: 24px; height: 4px; border-radius: 2px; }
+  .swatch.teal { background: #00ffd5; }
+  .swatch.blue { background: #5d8fff; }
+  .swatch.orange { background: #ffa500; }
+  .swatch.red { background: #ff4757; }
+  .swatch.green { background: #00ff88; }
+  .swatch.gray { background: #6c7a8c; }
+  .decision {
+    background: linear-gradient(135deg, #131927 0%, #1a2335 100%);
+    border: 2px solid #00ffd5;
+    border-radius: 12px;
+    padding: 16px;
+    margin: 16px 0;
+  }
+  .decision.skip { border-color: #6c7a8c; opacity: 0.7; }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: bold;
+    margin-left: 8px;
+  }
+  .badge.go { background: #00ff88; color: #0a0e1a; }
+  .badge.skip { background: #ff4757; color: #0a0e1a; }
+  .badge.caution { background: #ffd166; color: #0a0e1a; }
+  .pane {
+    background: #0d1421;
+    border: 1px solid #1f2940;
+    border-radius: 8px;
+    padding: 12px;
+    font-size: 12px;
+    color: #6c7a8c;
+    font-family: 'Courier New', monospace;
+  }
+  .pane-line { color: #e0e6f0; }
+  .pane-zone { color: #5d8fff; }
+  code { background: #1f2940; padding: 2px 6px; border-radius: 3px; color: #00ffd5; font-size: 12px; }
+  .arrow { color: #00ff88; font-weight: bold; }
+  .x-mark { color: #ff4757; font-weight: bold; }
+  .footer { margin-top: 32px; padding-top: 16px; border-top: 1px solid #1f2940; color: #6c7a8c; font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>🦄 RX-0 Unicorn — Trading Cheat Sheet</h1>
+<div class="subtitle">v1.0 · Pine Script v6 · 4-Indicator Confluence · Crypto Manual Trading</div>
+
+<!-- ============================== -->
+<h2>1. 📊 rx0-momentum.pane (lower)</h2>
+<!-- ============================== -->
+
+<div class="card highlight">
+  <div class="label">Pane Layout (top to bottom)</div>
+  <div class="pane">
+    <div class="pane-line">+100 ─── RSI Top (gray dotted)</div>
+    <div class="pane-line"> +60 ─── <span style="color:#ff4757">RSI OB / WT OB (red dashed)</span></div>
+    <div class="pane-line"> +50 ─── Mid (gray dotted)</div>
+    <div class="pane-line"> ADX ─── <span style="color:#ffa500">orange stepline</span> · threshold 25</div>
+    <div class="pane-line"> RSI ─── <span style="color:#00ffd5">teal solid</span> · Wilder(14)</div>
+    <div class="pane-line"> WT1 ── <span style="color:#5d8fff">blue solid</span> · fast line (momentum)</div>
+    <div class="pane-line"> WT2 ── <span style="color:#ff4757">red solid</span> · slow line (signal)</div>
+    <div class="pane-line">   0 ─── Zero (gray dotted)  ← WT1 above = bull, below = bear</div>
+    <div class="pane-line"> -60 ─── <span style="color:#00ff88">RSI OS / WT OS (green dashed)</span></div>
+    <div class="pane-line">-100 ─── Bottom (gray dotted)</div>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="card">
+    <h3>🔵 ADX (Trend Strength)</h3>
+    <table>
+      <tr><td class="sym">↑↑</td><td>&gt; 25</td><td class="value up"><strong>TRENDING</strong> → trade-friendly</td></tr>
+      <tr><td class="sym">↓↓</td><td>&lt; 25</td><td class="value down"><strong>RANGING</strong> → SKIP, banyak noise</td></tr>
+    </table>
+    <div class="value" style="font-size:11px;color:#6c7a8c;margin-top:8px">ADX = kekuatan trend, BUKAN arah. Combine dgn WT1 cross.</div>
+  </div>
+
+  <div class="card">
+    <h3>🟢🔴 WT1 × WT2 (Momentum Cross)</h3>
+    <table>
+      <tr><td class="sym">▲</td><td>WT1 cross WT2 <strong>di bawah -60</strong></td><td class="value up">LONG signal</td></tr>
+      <tr><td class="sym">▼</td><td>WT1 cross WT2 <strong>di atas +60</strong></td><td class="value down">SHORT signal</td></tr>
+      <tr><td class="sym">—</td><td>Cross di tengah (±30)</td><td class="value neutral">NOISE, abaikan</td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3>📈 RSI Wilder (Extreme Zones)</h3>
+    <table>
+      <tr><td class="sym">↑</td><td>&gt; 70</td><td class="value down">Overbought, hati-hati long</td></tr>
+      <tr><td class="sym">→</td><td>50-70</td><td class="value up">Bullish momentum</td></tr>
+      <tr><td class="sym">→</td><td>30-50</td><td class="value down">Bearish momentum</td></tr>
+      <tr><td class="sym">↓</td><td>&lt; 30</td><td class="value up">Oversold, potential bounce</td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3>🎨 Background Tint (otomatis)</h3>
+    <div class="legend">
+      <div class="legend-item"><div class="swatch" style="background:rgba(93,143,255,0.2)"></div>Biru = Trending (ADX &gt; 25)</div>
+      <div class="legend-item"><div class="swatch" style="background:rgba(108,122,140,0.2)"></div>Abu = Ranging (ADX &lt; 25)</div>
+      <div class="legend-item"><div class="swatch" style="background:rgba(0,255,136,0.2)"></div>Hijau = WT oversold zone</div>
+      <div class="legend-item"><div class="swatch" style="background:rgba(255,71,87,0.2)"></div>Merah = WT overbought zone</div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================== -->
+<h2>2. 📈 rx0-confluence.pane (chart utama overlay)</h2>
+<!-- ============================== -->
+
+<div class="card highlight">
+  <div class="label">Visual Elements</div>
+  <div class="legend" style="margin-top:8px">
+    <div class="legend-item"><div class="swatch teal"></div>Luminance range (2 line + fill)</div>
+    <div class="legend-item"><div class="swatch green"></div>▼ Swing low marker</div>
+    <div class="legend-item"><div class="swatch red"></div>▲ Swing high marker</div>
+    <div class="legend-item"><div class="swatch blue"></div><strong>BOS</strong> label (continuation)</div>
+    <div class="legend-item"><div class="swatch" style="background:#ffa500"></div><strong>CHoCH</strong> label (reversal)</div>
+  </div>
+  <div class="legend">
+    <div class="legend-item"><div class="swatch green"></div>Lum▲ / A+▲ / V▲ (long signals)</div>
+    <div class="legend-item"><div class="swatch red"></div>Lum▼ / A+▼ / V▼ (short signals)</div>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="card">
+    <h3>💥 Luminance Breakout</h3>
+    <table>
+      <tr><td class="sym">▲</td><td>Close &gt; rangeHigh + vol 1.5x + cons ≥ 5</td><td class="value up">LONG breakout</td></tr>
+      <tr><td class="sym">▼</td><td>Close &lt; rangeLow + vol 1.5x + cons ≥ 5</td><td class="value down">SHORT breakout</td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3>📐 BOS vs CHoCH</h3>
+    <table>
+      <tr><td class="sym">BOS</td><td>Break of Structure</td><td class="value up">Trend continuation</td></tr>
+      <tr><td class="sym">CHoCH</td><td>Change of Character</td><td class="value neutral">Potential reversal</td></tr>
+    </table>
+  </div>
+</div>
+
+<!-- ============================== -->
+<h2>3. 🎯 Decision Matrix (FINAL)</h2>
+<!-- ============================== -->
+
+<div class="grid">
+  <div class="decision">
+    <h3 style="color:#00ff88">✅ A+ GO (size 1.5x)</h3>
+    <div class="value" style="color:#e0e6f0">
+      Confluence <strong>4/4</strong> + Regime <strong>Trending</strong>
+    </div>
+    <div class="label" style="margin-top:8px">Action: ENTER FULL POSITION, 1.5x leverage (kalau futures)</div>
+    <span class="badge go">GO</span>
+  </div>
+
+  <div class="decision">
+    <h3 style="color:#00ffd5">✅ VALID (size 1.0x)</h3>
+    <div class="value" style="color:#e0e6f0">
+      Confluence <strong>3/4</strong> + Regime <strong>Trending</strong>
+    </div>
+    <div class="label" style="margin-top:8px">Action: ENTER NORMAL, conservative SL</div>
+    <span class="badge go">GO</span>
+  </div>
+
+  <div class="decision" style="border-color:#ffd166">
+    <h3 style="color:#ffd166">⚠️ CAUTION (size 0.5x)</h3>
+    <div class="value" style="color:#e0e6f0">
+      Confluence <strong>4/4 (A+)</strong> tapi Regime <strong>Ranging</strong>
+    </div>
+    <div class="label" style="margin-top:8px">Action: boleh entry, size kecil, TP cepat</div>
+    <span class="badge caution">CAUTION</span>
+  </div>
+
+  <div class="decision skip">
+    <h3 style="color:#ff4757">❌ SKIP (no trade)</h3>
+    <div class="value" style="color:#e0e6f0">
+      Confluence <strong>2/4 atau kurang</strong> ATAU Regime <strong>Ranging + Valid</strong>
+    </div>
+    <div class="label" style="margin-top:8px">Action: stay out, save capital buat better setup</div>
+    <span class="badge skip">SKIP</span>
+  </div>
+</div>
+
+<!-- ============================== -->
+<h2>4. 🚦 Real-time Checklist</h2>
+<!-- ============================== -->
+
+<div class="card highlight">
+  <div class="label">Sebelum Entry, Cek 5 Hal Ini:</div>
+  <div style="margin-top:12px; font-size:14px;">
+    <div style="padding:6px 0"><span class="arrow">1.</span> Background <strong>Trending</strong> (ADX &gt; 25)? &nbsp;→ kalau abu, STOP</div>
+    <div style="padding:6px 0"><span class="arrow">2.</span> Luminance breakout muncul (Lum▲ atau Lum▼)?</div>
+    <div style="padding:6px 0"><span class="arrow">3.</span> BOS/CHoCH label sesuai direction?</div>
+    <div style="padding:6px 0"><span class="arrow">4.</span> WT1 cross WT2 di zona extreme (bukan tengah)?</div>
+    <div style="padding:6px 0"><span class="arrow">5.</span> Confluence score: <strong>3/4 = Valid</strong>, <strong>4/4 = A+</strong></div>
+  </div>
+  <div style="margin-top:16px; padding:10px; background:#0a0e1a; border-radius:6px; font-size:12px; color:#6c7a8c">
+    💡 <strong>Min 4 dari 5 = ENTRY.</strong> Kalau cuma 3 dari 5, lean SKIP.
+  </div>
+</div>
+
+<!-- ============================== -->
+<h2>5. 🛡️ Risk Reminder</h2>
+<!-- ============================== -->
+
+<div class="card">
+  <div class="grid" style="grid-template-columns: 1fr 1fr 1fr; gap:8px; margin:0">
+    <div>
+      <div class="label">Risk/trade</div>
+      <div class="value up">1-2% modal</div>
+    </div>
+    <div>
+      <div class="label">Min R:R</div>
+      <div class="value up">1:2</div>
+    </div>
+    <div>
+      <div class="label">Max trades/day</div>
+      <div class="value neutral">3</div>
+    </div>
+    <div>
+      <div class="label">Daily loss limit</div>
+      <div class="value down">-5% → STOP</div>
+    </div>
+    <div>
+      <div class="label">News filter</div>
+      <div class="value neutral">±30 min red news</div>
+    </div>
+    <div>
+      <div class="label">Max correlated</div>
+      <div class="value neutral">2 posisi</div>
+    </div>
+  </div>
+</div>
+
+<div class="footer">
+  <strong>Quick Commands:</strong> 
+  <code>python main.py scan --timeframe 1h</code> · 
+  <code>python main.py backtest --symbol BTC/USDT --days 90</code> · 
+  <code>python main.py daemon</code> (Telegram alerts)
+</div>
+
+</div>
+</body>
+</html>
