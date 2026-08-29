@@ -344,3 +344,51 @@ class CryptoFetcher:
                 self.exchange.close()
         except Exception:  # noqa: BLE001
             pass
+
+
+# -----------------------------------------------------------------------------
+# MultiExchangeFetcher: bypass geo-restrictions with intelligent fallback
+# -----------------------------------------------------------------------------
+class MultiExchangeFetcher:
+    """
+    Robust fetcher with multi-exchange fallback chain.
+
+    Primary: data-api.binance.vision (Binance data API, no geo-block)
+    Fallbacks: Gate.io, HTX, Bybit (no SSL), OKX (no SSL).
+
+    Use this when:
+    - Standard CCXT Binance fails due to geo-block (Indonesia, etc.)
+    - Need guaranteed data fetch (resilient to single-exchange outage)
+    - Want Binance data quality (deepest liquidity) regardless of region
+
+    Returns same format as CryptoFetcher: pandas DataFrame.
+    """
+
+    def __init__(self, preferred: str = "binance"):
+        self.preferred = preferred
+        from data.fetchers.multi_exchange import (
+            fetch_ohlcv_multi as _fetch_ohlcv_multi,
+            fetch_ticker_multi as _fetch_ticker_multi,
+        )
+        self._fetch_ohlcv = _fetch_ohlcv_multi
+        self._fetch_ticker = _fetch_ticker_multi
+
+    def fetch_ohlcv(
+        self,
+        symbol: str,
+        timeframe: str = "1h",
+        limit: int = 200,
+    ) -> pd.DataFrame:
+        """Fetch OHLCV with multi-exchange fallback."""
+        from data.fetchers.multi_exchange import fetch_ohlcv_multi
+        rows = fetch_ohlcv_multi(symbol, timeframe, limit, preferred=self.preferred)
+        if not rows:
+            raise RuntimeError(f"No data returned for {symbol}")
+        df = pd.DataFrame(rows, columns=["timestamp", "open", "high", "low", "close", "volume"])
+        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
+        return df
+
+    def fetch_ticker(self, symbol: str) -> float | None:
+        """Fetch current price with multi-exchange fallback."""
+        from data.fetchers.multi_exchange import fetch_ticker_multi
+        return fetch_ticker_multi(symbol, preferred=self.preferred)
