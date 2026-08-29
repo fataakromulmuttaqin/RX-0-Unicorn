@@ -151,8 +151,9 @@ regimeBg = isTrending ? color.new(color.blue, 95) : color.new(color.gray, 95)
 wtZoneBg = wt1 >= wtOB ? color.new(color.red, 92) : wt1 <= wtOS ? color.new(color.green, 92) : na
 //   v6 FIX: single ternary expression at global scope to avoid the
 //   CE10188 "local scope" error that v5 allowed via intermediate vars.
+//   v6 FIX: use `na()` function instead of `!= na` comparison (CE10187).
 bgcolor(
-     wtZoneBg != na ? wtZoneBg : regimeBg,
+     not na(wtZoneBg) ? wtZoneBg : regimeBg,
      title="Regime/Zone Background")
 
 // =========================================================================
