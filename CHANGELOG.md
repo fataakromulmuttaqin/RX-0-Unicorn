@@ -6,7 +6,7 @@ Format: [Semantic Versioning](https://semver.org/)
 
 ---
 
-## [0.1.0] — 2026-08-29 (In Progress)
+## [0.1.0] — 2026-08-29
 
 ### Phase 1: Data Foundation
 
@@ -37,7 +37,7 @@ Format: [Semantic Versioning](https://semver.org/)
 
 ---
 
-## [0.2.0] — 2026-08-29 (In Progress)
+## [0.2.0] — 2026-08-29
 
 ### Phase 2: Core Indicator Engine
 
@@ -56,16 +56,28 @@ Format: [Semantic Versioning](https://semver.org/)
 
 #### Notes
 - Setiap indikator mengembalikan DataFrame dengan kolom `*_signal` (1/-1/0) yang konsisten, siap dikonsumsi Confluence Scorer di Phase 3
-- Confluence scoring resmi (0-4 + entry rules, position sizing 1.5x untuk A+ setup) masih Phase 3 — `main.py scan` saat ini hanya preview sederhana (hitung sisi long/short yang paling banyak align)
+- Confluence scoring resmi (0-4 + entry rules, position sizing 1.5x untuk A+ setup) dibangun di Phase 3 (lihat [0.3.0] di bawah) — `main.py scan` sekarang memakainya langsung
 
 ---
 
-## [0.3.0] — Planned
+## [0.3.0] — 2026-08-29 (In Progress)
 
 ### Phase 3: Confluence Scorer
-- 4-layer scoring logic (0-4)
-- Entry validation rules
-- Filter out weak signals (< 3/4)
+
+#### Added
+- ✅ `confluence/scorer.py` — `score_confluence()`: skor 0-4 penuh per-bar dari 4 sinyal indikator Phase 2, plus grade (`skip`/`valid`/`A+`) dan `size_multiplier` (0.0/1.0/1.5) sesuai STRATEGY.md
+- ✅ `latest_confluence()` — ringkasan bar terakhir (dict, tipe native Python) siap dikonsumsi CLI/alert
+- ✅ Risk levels otomatis: `entry_price`, `stop_loss` (dari range breakout / swing structure), `take_profit_1` (1R), `take_profit_2` (2R), `risk_reward`
+- ✅ Konstanta scoring baru di `src/config.py`: `CONFLUENCE_MIN_VALID`, `CONFLUENCE_A_PLUS`, `A_PLUS_SIZE_MULTIPLIER`, `VALID_SIZE_MULTIPLIER`, `SKIP_SIZE_MULTIPLIER`, `MIN_RISK_REWARD`
+- ✅ `main.py scan` — sekarang pakai Confluence Scorer resmi (bukan preview sederhana lagi), tabel output menampilkan Grade/SL/TP1/TP2
+- ✅ `tests/test_confluence.py` — 15 unit tests (score bounds, grade↔score consistency, risk level ordering long/short, edge case no-direction, native type check)
+
+#### Changed
+- 🔁 Logic confluence di `main.py cmd_scan` dipindah sepenuhnya ke modul `confluence/` — CLI kini jadi thin wrapper
+
+#### Notes
+- Scoring ini mekanis (berbasis 4 sinyal indikator, bukan discretionary "BOS + pullback ke demand zone" penuh dari STRATEGY.md) — cukup untuk backtest awal (Phase 5) dan alerting (Phase 4)
+- Total test suite: **52 passed, 2 skipped** (skip = live-network test, butuh akses Binance)
 
 ---
 

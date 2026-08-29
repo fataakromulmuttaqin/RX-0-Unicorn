@@ -65,6 +65,15 @@ WATCHLIST_TIERS: tuple[str, ...] = (
 DEFAULT_TIMEFRAME: str = "1h"
 DEFAULT_LIMIT: int = 500
 
+# --- Confluence Scorer (Phase 3) ---
+# Skor 0-4 berdasarkan berapa banyak dari 4 indikator yang align searah.
+CONFLUENCE_MIN_VALID: int = 3  # < ini -> SKIP (lihat STRATEGY.md)
+CONFLUENCE_A_PLUS: int = 4  # A+ setup -> size up
+A_PLUS_SIZE_MULTIPLIER: float = 1.5
+VALID_SIZE_MULTIPLIER: float = 1.0
+SKIP_SIZE_MULTIPLIER: float = 0.0
+MIN_RISK_REWARD: float = 2.0  # R:R minimum 1:2 (TP >= 2x jarak SL)
+
 
 def ensure_dirs() -> None:
     """Pastikan semua direktori yang dibutuhkan sudah ada."""
