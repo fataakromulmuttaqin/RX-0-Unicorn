@@ -100,9 +100,12 @@ class PaperNotifier:
         symbol = trade.get("symbol", "?")
         direction = (trade.get("direction") or "?").upper()
         entry = float(trade.get("entry_price") or 0)
-        sl = float(trade.get("sl") or 0)
-        tp1 = float(trade.get("tp1") or 0)
-        tp2 = float(trade.get("tp2") or 0)
+        # Bug fix: support both short keys (sl/tp1/tp2) and long keys
+        # (stop_loss/take_profit_1/take_profit_2) since the trade dict may
+        # come from either PaperJournal.open() row or from manual dict.
+        sl  = float(trade.get("sl")  or trade.get("stop_loss")      or 0)
+        tp1 = float(trade.get("tp1") or trade.get("take_profit_1")  or 0)
+        tp2 = float(trade.get("tp2") or trade.get("take_profit_2")  or 0)
         score = int(trade.get("confluence_score") or 0)
         grade = str(trade.get("grade") or "?")
         size_mult = float(trade.get("size_multiplier") or 1.0)
