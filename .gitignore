@@ -1,0 +1,75 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.venv/
+venv/
+ENV/
+env/
+
+# Project
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+data/storage/*.db
+data/storage/*.db-journal
+data/cache/
+data/exports/
+
+# Logs
+logs/
+*.log
+*.log.*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+*.env
+
+# Secrets
+secrets/
+credentials/
+*.pem
+*.key
+*.crt
+
+# API keys / tokens
+config.json
+api_keys.json
+
+# Backtest results (keep structure, ignore large outputs)
+backtest/results/*.png
+backtest/results/*.html
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~
+
+# Distribution
+build/
+dist/
+*.egg

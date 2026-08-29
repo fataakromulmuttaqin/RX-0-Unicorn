@@ -1,0 +1,260 @@
+# 🦄 RX-0 Unicorn
+
+> **Crypto trading bot bertenaga AI dengan strategi LuxAlgo-grade — dibangun dari nol untuk profit konsisten.**
+
+[![Status](https://img.shields.io/badge/status-Phase%201%20Development-yellow)]()
+[![Python](https://img.shields.io/badge/python-3.10+-blue)]()
+[![License](https://img.shields.io/badge/license-Private-red)]()
+
+---
+
+## 🎯 Vision
+
+RX-0 Unicorn adalah **crypto trading bot** yang mengimplementasikan strategi terbukti dari **LuxAlgo** dengan approach modern:
+
+- **Confluence-based** — bukan single indicator, tapi 4-layer confirmation
+- **Backtested** — setiap strategy harus lulus 6 metrics wajib
+- **Adaptive** — belajar dari trade history (LLM-enhanced phase akhir)
+- **Transparent** — semua signal, win/loss, dan metrics terekspos di Telegram
+
+**Target pasar:** Crypto spot & futures (Binance, Bybit, OKX) — mulai dari Bitcoin & Ethereum, expand ke altcoin liquid.
+
+---
+
+## 🧠 Strategi Inti
+
+Berdasarkan riset dari [LuxAlgo Library](https://www.luxalgo.com/library/), RX-0 Unicorn menggunakan **4-strategy confluence framework**:
+
+### Core Strategy Stack
+
+| Layer | Strategi | Fungsi | LuxAlgo PF | LuxAlgo WR |
+|-------|----------|--------|------------|------------|
+| **1. Trend Detection** | **Luminance Breakout Engine** | Identifikasi breakout dengan volume confirm | 2.33 | 71.6% |
+| **2. Regime Filter** | **RSI Regime Filter** | Anti-fading runaway trend, validasi momentum | - | - |
+| **3. Structure** | **BOS/CHoCH Dashboard** | Break of Structure + Change of Character confirm | - | - |
+| **4. Exit Timing** | **WaveTrend Oscillator** | Momentum exit, timing TP yang presisi | 2.20 | 67% |
+
+### Confluence Scoring
+
+- **4/4 confluence** = A+ setup (size up 1.5x normal)
+- **3/4 confluence** = Valid entry (full size)
+- **2/4 atau kurang** = SKIP (no trade)
+
+> **Kenapa confluence?** Single indicator = noise. Multi-confirmation = edge. Backtest LuxAlgo menunjukkan win rate 71%+ saat 3+ indicator aligned.
+
+---
+
+## 🏗️ Arsitektur
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                  RX-0 UNICORN SYSTEM                    │
+├─────────────────────────────────────────────────────────┤
+│                                                         │
+│  ┌──────────────┐    ┌──────────────┐                  │
+│  │ Data Layer   │───▶│ Indicator    │                  │
+│  │ (CCXT)       │    │ Engine       │                  │
+│  └──────────────┘    └──────┬───────┘                  │
+│                             │                           │
+│                             ▼                           │
+│                      ┌──────────────┐                   │
+│                      │ Confluence   │                   │
+│                      │ Scorer       │                   │
+│                      └──────┬───────┘                   │
+│                             │                           │
+│         ┌───────────────────┼───────────────────┐      │
+│         ▼                   ▼                   ▼      │
+│  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐│
+│  │ Telegram     │   │ Backtest     │   │ Auto-Trade   ││
+│  │ Alert        │   │ Engine       │   │ (Future)     ││
+│  └──────────────┘   └──────────────┘   └──────────────┘│
+│                                                         │
+└─────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 🗺️ Roadmap 7 Fase
+
+| Fase | Nama | Status | Output | Estimasi |
+|------|------|--------|--------|----------|
+| **1** | **Data Foundation** | 🟡 In Progress | Candle puller + SQLite + watchlist | 1-2 hari |
+| 2 | Core Indicator Engine | ⏳ Pending | Luminance + RSI Regime + BOS/CHoCH + WaveTrend (Python port) | 3-4 hari |
+| 3 | Confluence Scorer | ⏳ Pending | 0-4 scoring logic, entry rules | 1 hari |
+| 4 | Telegram Alert System | ⏳ Pending | Alert format + cooldown + top 5 ranking | 1-2 hari |
+| 5 | Backtest Engine | ⏳ Pending | Historical replay + 6 metrics + equity curve | 2-3 hari |
+| 6 | Paper Trading | ⏳ Pending | Dry-run 2-4 minggu, real-time win rate tracking | 2-4 minggu |
+| 7 | Auto-Trade Layer | ⏳ Pending | CCXT live execution + risk guard + kill switch | 3-5 hari |
+
+**Total timeline:** ~3-4 minggu sampai full auto-trade ready.
+
+---
+
+## 📦 Tech Stack
+
+- **Language:** Python 3.10+
+- **Data Source:** CCXT (Binance public endpoints initially)
+- **Storage:** SQLite (local, no external DB)
+- **Indicators:** Python port dari PineScript LuxAlgo
+- **Alerting:** Telegram Bot API
+- **Backtesting:** Custom engine + vectorbt (planned)
+- **Execution:** CCXT (Binance, Bybit, OKX)
+- **LLM Enhancement:** OpenAI/Groq (Phase 7+)
+
+### Dependencies
+
+```
+ccxt>=4.0.0          # Exchange connectivity
+pandas>=2.0.0        # Data manipulation
+loguru>=0.7.0        # Logging
+python-dotenv>=1.0.0 # Config management
+pytest>=7.0.0        # Testing
+```
+
+---
+
+## 🚀 Quick Start (Coming Soon)
+
+```bash
+# 1. Clone & setup
+git clone https://github.com/[username]/rx0-unicorn.git
+cd rx0-unicorn
+pip install -r requirements.txt
+
+# 2. Fetch initial data
+python main.py fetch --tier tier_1_major --timeframe 1h --limit 500
+
+# 3. Check status
+python main.py status
+
+# 4. (Phase 2) Run scanner
+python main.py scan --timeframe 1h
+
+# 5. (Phase 4) Start alert daemon
+python main.py daemon --interval 300
+```
+
+---
+
+## 📊 Project Structure
+
+```
+luxalgo-trader/
+├── data/
+│   ├── fetchers/
+│   │   └── crypto_fetcher.py      # CCXT Binance public endpoints
+│   ├── storage/
+│   │   └── candle_db.py           # SQLite schema + CRUD
+│   └── pairs/
+│       └── watchlist.json         # 50+ crypto pairs (tiered)
+├── src/
+│   ├── config.py                  # Constants, paths, settings
+│   └── logger.py                  # Loguru setup
+├── indicators/                     # Phase 2
+│   ├── luminance.py
+│   ├── rsi_regime.py
+│   ├── structure.py
+│   └── wavetrend.py
+├── confluence/                    # Phase 3
+│   └── scorer.py
+├── alerts/                         # Phase 4
+│   └── telegram.py
+├── backtest/                       # Phase 5
+│   ├── engine.py
+│   └── metrics.py
+├── execution/                      # Phase 7
+│   ├── trader.py
+│   └── risk_manager.py
+├── tests/
+├── main.py
+├── requirements.txt
+├── .gitignore
+└── README.md
+```
+
+---
+
+## 🎯 Watchlist Tier System
+
+Bot scan 50+ pairs yang di-organize dalam 4 tier:
+
+- **Tier 1 (Major):** BTC, ETH, SOL, BNB — selalu scan
+- **Tier 2 (Large Cap):** XRP, ADA, AVAX, dll — high liquidity
+- **Tier 3 (Mid Cap):** Mid-cap altcoin dengan volume kuat
+- **Tier 4 (Development):** Emerging pairs, lower priority
+
+Detail ada di `data/pairs/watchlist.json`.
+
+---
+
+## 📈 Performance Metrics (Target)
+
+Saat backtest & paper trading jalan, RX-0 Unicorn diukur dengan **6 metrics wajib**:
+
+1. **Win Rate** — target > 50% (dengan R:R 1:2 = profitable)
+2. **Profit Factor** — target > 1.5 (gross profit / gross loss)
+3. **Max Drawdown** — target < 20%
+4. **Sharpe Ratio** — target > 1.5
+5. **Avg R-Multiple** — target > 1.5R per trade
+6. **Expectancy** — formula: (WR × avg_win) - ((1-WR) × avg_loss) — target > 0
+
+---
+
+## 🛡️ Risk Management (Phase 7)
+
+- **Risk per trade:** 1-2% modal
+- **R:R minimum:** 1:2
+- **Max trades/day:** 3 (anti-overtrading)
+- **Daily loss limit:** 5% → auto-stop
+- **Correlation guard:** Max 2 posisi dalam pair yang berkorelasi tinggi
+- **News filter:** Skip 30 menit sebelum/sesudah high-impact news
+
+---
+
+## 🔒 Security & Privacy
+
+- **No API key di code** — semua via `.env` (gitignored)
+- **Paper trading by default** — live mode butuh explicit enable
+- **Kill switch** — emergency stop via Telegram command
+- **Local-only data** — tidak ada data dikirim ke external service (kecuali Telegram alert)
+
+---
+
+## 📚 References
+
+- [LuxAlgo Library](https://www.luxalgo.com/library/) — source strategi
+- [LuxAlgo AI Backtesting](https://www.luxalgo.com/features/backtesting/)
+- [CCXT Documentation](https://docs.ccxt.com/)
+- [Binance API Docs](https://binance-docs.github.io/apidocs/)
+
+---
+
+## 📝 Development Log
+
+### Phase 1 — Data Foundation (Current)
+- [x] Project structure setup
+- [x] CCXT fetcher implementation
+- [x] SQLite storage layer
+- [x] Watchlist (50+ pairs)
+- [x] CLI entry point
+- [x] Logger setup
+- [ ] (Coming) Backfill historical data
+
+### Phase 2 — Core Indicators (Next)
+- [ ] Luminance Breakout Engine (Python port)
+- [ ] RSI Regime Filter
+- [ ] BOS/CHoCH Structure
+- [ ] WaveTrend Oscillator
+
+### Phase 3-7 (Planned)
+- Confluence scorer, Telegram alerts, backtest engine, paper trading, auto-trade
+
+---
+
+## 📄 License
+
+Private project — All rights reserved.
+
+---
+
+**Built with 🦄 by Fataakromulm | Strategi powered by LuxAlgo**

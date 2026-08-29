@@ -1,0 +1,9 @@
+# RX-0 Unicorn - Phase 1 Data Foundation
+# Core dependencies
+ccxt>=4.0.0
+pandas>=2.0.0
+loguru>=0.7.0
+python-dotenv>=1.0.0
+
+# Development dependencies
+pytest>=7.0.0
