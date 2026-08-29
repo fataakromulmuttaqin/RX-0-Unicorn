@@ -94,8 +94,32 @@ A_PLUS_EMOJI: str = "⭐"
 VALID_EMOJI: str = "🟢"
 SKIP_EMOJI: str = "⚪"
 
+# --- Backtest Engine (Phase 5) ---
+# Modal awal (USD) dan risk parameter default untuk backtest.
+BACKTEST_DEFAULT_DAYS: int = 90
+BACKTEST_INITIAL_CAPITAL: float = 10_000.0
+BACKTEST_RISK_PER_TRADE: float = 0.02
+# Time stop: berapa bar maksimum hold sebelum force-close.
+BACKTEST_MAX_BARS_HOLD: int = 50
+# Minimum sample size (jumlah hari data) untuk dianggap layak di-backtest.
+BACKTEST_MIN_SAMPLE_SIZE: int = 30
+# Default directory untuk hasil backtest (JSON, equity chart).
+BACKTEST_OUTPUT_DIR: Path = PROJECT_ROOT / "backtest" / "results"
+# Minimum confluence score untuk entry di backtest (3 = valid, 4 = A+).
+BACKTEST_MIN_SCORE: int = 3
+# Warm-up bars di-skip sebelum mulai evaluasi sinyal (supaya indikator
+# WaveTrend/ADX punya cukup data). ~2.5 hari untuk 1h.
+BACKTEST_WARMUP_BARS: int = 60
+
+# Target 6 metrics wajib (STRATEGY.md). Dipakai report + target_check().
+TARGET_WIN_RATE: float = 0.50  # > 50%
+TARGET_PROFIT_FACTOR: float = 1.5  # > 1.5
+TARGET_MAX_DRAWDOWN: float = 0.20  # < 20%
+TARGET_SHARPE: float = 1.5  # > 1.5
+TARGET_AVG_R_MULTIPLE: float = 1.5  # > 1.5R
+
 
 def ensure_dirs() -> None:
     """Pastikan semua direktori yang dibutuhkan sudah ada."""
-    for d in (DATA_DIR, STORAGE_DIR, FETCHERS_DIR, PAIRS_DIR, LOGS_DIR):
+    for d in (DATA_DIR, STORAGE_DIR, FETCHERS_DIR, PAIRS_DIR, LOGS_DIR, BACKTEST_OUTPUT_DIR):
         d.mkdir(parents=True, exist_ok=True)

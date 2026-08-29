@@ -1,5 +1,5 @@
 """
-RX-0 Unicorn — Phase 1 + Phase 2 + Phase 3 + Phase 4 CLI entry point.
+RX-0 Unicorn — Phase 1 + Phase 2 + Phase 3 + Phase 4 + Phase 5 CLI entry point.
 
 Subcommands:
     fetch        Tarik candle untuk watchlist dan simpan ke SQLite.
@@ -9,6 +9,7 @@ Subcommands:
     daemon       Loop forever: scan + kirim top-N alert ke Telegram (Phase 4).
     test-alert   Kirim sample alert (placeholder data) untuk verifikasi bot.
     cooldown     Manage alert cooldown table (list/clear/clear-all).
+    backtest     Walk-forward backtest + 6 metrics wajib STRATEGY.md (Phase 5).
 """
 
 from __future__ import annotations
@@ -30,9 +31,19 @@ from alerts import CooldownManager, TelegramBot, format_signal
 from confluence import GRADE_A_PLUS, GRADE_SKIP, GRADE_VALID, latest_confluence
 from data.fetchers.crypto_fetcher import CryptoFetcher
 from data.storage.candle_db import CandleDB
+from backtest.data_loader import ensure_data
+from backtest.engine import run_backtest
+from backtest.metrics import calculate_metrics
+from backtest.report import format_report, to_equity_curve_chart, to_json
 from src.config import (
     ALERT_COOLDOWN_MINUTES,
     ALERT_TOP_N,
+    BACKTEST_DEFAULT_DAYS,
+    BACKTEST_INITIAL_CAPITAL,
+    BACKTEST_MAX_BARS_HOLD,
+    BACKTEST_MIN_SAMPLE_SIZE,
+    BACKTEST_OUTPUT_DIR,
+    BACKTEST_RISK_PER_TRADE,
     CONFLUENCE_MIN_VALID,
     DEFAULT_LIMIT,
     DEFAULT_TIMEFRAME,
@@ -378,6 +389,122 @@ def cmd_cooldown(args: argparse.Namespace) -> int:
         return 0
 
 
+# --- Subcommand handler (Phase 5) -------------------------------------------
+def cmd_backtest(args: argparse.Namespace) -> int:
+    """
+    Jalankan backtest walk-forward untuk satu simbol/timeframe.
+
+    Pipeline:
+        1. ensure_data() -> DataFrame (DB-first, fallback CCXT)
+        2. run_backtest() -> BacktestResult (list Trade)
+        3. calculate_metrics() -> 6 metrics + turunan
+        4. format_report() -> print
+        5. Optional: simpan JSON / render equity chart
+    """
+    symbol = args.symbol.strip().upper()
+    timeframe = args.timeframe
+    days = int(args.days)
+    initial_capital = float(args.initial_capital)
+    risk_per_trade = float(args.risk_per_trade)
+    max_bars_hold = int(args.max_bars_hold)
+
+    if days < BACKTEST_MIN_SAMPLE_SIZE:
+        logger.warning(
+            f"Sample size {days} hari < minimum {BACKTEST_MIN_SAMPLE_SIZE}. "
+            f"Hasil backtest mungkin tidak signifikan secara statistik."
+        )
+
+    logger.info(
+        f"Backtest plan: symbol={symbol}, tf={timeframe}, days={days}, "
+        f"capital=${initial_capital:,.2f}, risk={risk_per_trade * 100:.2f}%, "
+        f"max_bars_hold={max_bars_hold}"
+    )
+
+    # 1. Data
+    try:
+        df = ensure_data(symbol=symbol, timeframe=timeframe, days_back=days)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(f"Data load failed: {exc}")
+        return 1
+    if df is None or df.empty:
+        logger.error(
+            f"Tidak ada data untuk {symbol} {timeframe} — "
+            f"coba 'python main.py fetch --symbol {symbol} --timeframe {timeframe}' dulu"
+        )
+        return 1
+
+    # 2. Run engine
+    try:
+        result = run_backtest(
+            df=df,
+            symbol=symbol,
+            timeframe=timeframe,
+            initial_capital=initial_capital,
+            risk_per_trade=risk_per_trade,
+            max_bars_hold=max_bars_hold,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(f"Backtest engine error: {exc}")
+        return 1
+
+    # 3. Metrics
+    trade_dicts = [t.to_dict() for t in result.trades]
+    metrics = calculate_metrics(
+        trade_dicts,
+        initial_capital=initial_capital,
+        risk_per_trade=risk_per_trade,
+    )
+
+    # 4. Print report
+    period = (result.start_ts, result.end_ts)
+    report_text = format_report(
+        symbol=symbol,
+        timeframe=timeframe,
+        metrics=metrics,
+        trades=trade_dicts,
+        period=period,
+        initial_capital=initial_capital,
+        risk_per_trade=risk_per_trade,
+    )
+    print(report_text)
+
+    logger.info(
+        f"Backtest done: {len(result.trades)} trades, "
+        f"skipped_no_direction={result.skipped_no_direction}, "
+        f"skipped_no_risk={result.skipped_no_risk}, "
+        f"bars={result.bars_processed}"
+    )
+
+    # 5. Optional output files
+    metadata = {
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "days": days,
+        "initial_capital": initial_capital,
+        "risk_per_trade": risk_per_trade,
+        "max_bars_hold": max_bars_hold,
+        "skipped_no_direction": result.skipped_no_direction,
+        "skipped_no_risk": result.skipped_no_risk,
+        "bars_processed": result.bars_processed,
+        "start_ts": result.start_ts,
+        "end_ts": result.end_ts,
+    }
+
+    if args.output:
+        to_json(metrics, args.output, metadata=metadata, trades=trade_dicts)
+
+    if args.chart:
+        chart_title = f"RX-0 Unicorn — {symbol} {timeframe} ({days}d) Equity Curve"
+        to_equity_curve_chart(
+            metrics,
+            args.chart,
+            title=chart_title,
+            initial_capital=initial_capital,
+        )
+
+    return 0
+
+
 def _run_one_scan_cycle(
     timeframe: str,
     top_n: int,
@@ -662,6 +789,84 @@ def build_parser() -> argparse.ArgumentParser:
         help="Hapus semua entry cooldown (alias: --clear tanpa argumen).",
     )
     p_cd.set_defaults(func=cmd_cooldown)
+
+    # backtest (Phase 5)
+    p_bt = sub.add_parser(
+        "backtest",
+        help=(
+            "Jalankan backtest walk-forward untuk satu simbol/timeframe, "
+            "hitung 6 metrics wajib dari STRATEGY.md (Win Rate, Profit Factor, "
+            "Max Drawdown, Sharpe, Avg R-Multiple, Expectancy)."
+        ),
+    )
+    p_bt.add_argument(
+        "--symbol",
+        "-s",
+        required=True,
+        help="Simbol trading (e.g. BTC/USDT). Required.",
+    )
+    p_bt.add_argument(
+        "--timeframe",
+        "-t",
+        choices=VALID_TIMEFRAMES,
+        default=DEFAULT_TIMEFRAME,
+        help=f"Timeframe candle (default: {DEFAULT_TIMEFRAME}).",
+    )
+    p_bt.add_argument(
+        "--days",
+        "-d",
+        type=int,
+        default=BACKTEST_DEFAULT_DAYS,
+        help=(
+            f"Berapa hari data historis yang digunakan (default: "
+            f"{BACKTEST_DEFAULT_DAYS}). Minimum {BACKTEST_MIN_SAMPLE_SIZE}."
+        ),
+    )
+    p_bt.add_argument(
+        "--initial-capital",
+        type=float,
+        default=BACKTEST_INITIAL_CAPITAL,
+        help=(
+            f"Modal awal USD untuk backtest (default: "
+            f"{BACKTEST_INITIAL_CAPITAL:,.0f})."
+        ),
+    )
+    p_bt.add_argument(
+        "--risk-per-trade",
+        type=float,
+        default=BACKTEST_RISK_PER_TRADE,
+        help=(
+            f"Risk per trade sebagai fraksi modal (default: "
+            f"{BACKTEST_RISK_PER_TRADE})."
+        ),
+    )
+    p_bt.add_argument(
+        "--max-bars-hold",
+        type=int,
+        default=BACKTEST_MAX_BARS_HOLD,
+        help=(
+            f"Time stop dalam bar (default: {BACKTEST_MAX_BARS_HOLD})."
+        ),
+    )
+    p_bt.add_argument(
+        "--output",
+        "-o",
+        default=None,
+        help=(
+            "Path untuk simpan hasil backtest JSON (default: tidak disimpan). "
+            "Mis. backtest/results/btc_90d.json"
+        ),
+    )
+    p_bt.add_argument(
+        "--chart",
+        "-c",
+        default=None,
+        help=(
+            "Path untuk render equity curve PNG (default: tidak disimpan). "
+            "Mis. backtest/results/btc_equity.png"
+        ),
+    )
+    p_bt.set_defaults(func=cmd_backtest)
 
     return parser
 
