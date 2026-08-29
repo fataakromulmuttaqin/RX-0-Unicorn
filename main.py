@@ -1,18 +1,21 @@
 """
-RX-0 Unicorn — Phase 1 + Phase 2 + Phase 3 CLI entry point.
+RX-0 Unicorn — Phase 1 + Phase 2 + Phase 3 + Phase 4 CLI entry point.
 
 Subcommands:
-    fetch   Tarik candle untuk watchlist dan simpan ke SQLite.
-    status  Tampilkan statistik database.
-    cleanup Hapus candle lama sesuai retention policy.
-    scan    Jalankan Confluence Scorer (Phase 3, berbasis 4 indikator Phase 2)
-            di data yang sudah tersimpan dan tampilkan setup per simbol.
+    fetch        Tarik candle untuk watchlist dan simpan ke SQLite.
+    status       Tampilkan statistik database.
+    cleanup      Hapus candle lama sesuai retention policy.
+    scan         Jalankan Confluence Scorer (Phase 3) di data tersimpan.
+    daemon       Loop forever: scan + kirim top-N alert ke Telegram (Phase 4).
+    test-alert   Kirim sample alert (placeholder data) untuk verifikasi bot.
+    cooldown     Manage alert cooldown table (list/clear/clear-all).
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import signal
 import sys
 import time
 from pathlib import Path
@@ -23,13 +26,17 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from alerts import CooldownManager, TelegramBot, format_signal
 from confluence import GRADE_A_PLUS, GRADE_SKIP, GRADE_VALID, latest_confluence
 from data.fetchers.crypto_fetcher import CryptoFetcher
 from data.storage.candle_db import CandleDB
 from src.config import (
+    ALERT_COOLDOWN_MINUTES,
+    ALERT_TOP_N,
     CONFLUENCE_MIN_VALID,
     DEFAULT_LIMIT,
     DEFAULT_TIMEFRAME,
+    SCAN_INTERVAL_SECONDS,
     VALID_TIMEFRAMES,
     WATCHLIST_PATH,
     WATCHLIST_TIERS,
@@ -269,6 +276,243 @@ def cmd_scan(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- Subcommand handlers (Phase 4) ----------------------------------------
+def _sample_confluence_result() -> dict:
+    """
+    Placeholder confluence result untuk test-alert. Tidak bergantung pada
+    data pasar — biar user bisa verifikasi bot config sebelum ada data.
+    """
+    return {
+        "close": 62450.0,
+        "regime": "trending",
+        "direction": "long",
+        "score": 4,
+        "grade": GRADE_A_PLUS,
+        "size_multiplier": 1.5,
+        "entry_price": 62450.0,
+        "stop_loss": 62180.0,
+        "take_profit_1": 62990.0,
+        "take_profit_2": 63530.0,
+        "risk_reward": 2.0,
+        "signals": {
+            "luminance": 1,
+            "rsi_regime": 1,
+            "structure": 1,
+            "wavetrend": 1,
+        },
+    }
+
+
+def cmd_test_alert(_args: argparse.Namespace) -> int:
+    """
+    Kirim sample alert ke Telegram (atau console kalau token kosong).
+    Berguna untuk verify bot config sebelum run daemon.
+    """
+    sample = _sample_confluence_result()
+    text = format_signal(
+        sample,
+        pair="BTC/USDT",
+        timeframe="1H",
+    )
+    if text is None:
+        logger.error("format_signal returned None (unexpected for A+ sample)")
+        return 1
+
+    # Tampilkan sample ke console dulu (supaya user lihat kalau degraded)
+    print("─" * 60)
+    print("SAMPLE ALERT (A+ setup, placeholder data):")
+    print("─" * 60)
+    print(text)
+    print("─" * 60)
+
+    bot = TelegramBot()
+    try:
+        ok = bot.send_message(text)
+    finally:
+        bot.close()
+
+    if ok:
+        logger.success("Telegram send OK — check your chat!")
+        return 0
+    if not bot.is_configured:
+        logger.info(
+            "Bot not configured (no TELEGRAM_BOT_TOKEN/CHAT_ID). "
+            "Sample alert printed to console above. "
+            "Set token di .env untuk kirim real."
+        )
+        return 0
+    logger.error("Telegram send failed — lihat log di atas")
+    return 1
+
+
+def cmd_cooldown(args: argparse.Namespace) -> int:
+    """
+    Manage alert_cooldown table. Default: tampilkan isi. Opsi --clear
+    (dengan optional pair) hapus entry.
+    """
+    with CooldownManager(cooldown_minutes=ALERT_COOLDOWN_MINUTES) as cd:
+        if args.clear_all or args.clear:
+            pair = args.clear if args.clear else None
+            deleted = cd.clear(pair)
+            if pair:
+                logger.success(f"Cooldown cleared untuk {pair} ({deleted} row)")
+            else:
+                logger.success(f"Cooldown cleared semua ({deleted} rows)")
+            return 0
+
+        # Default action: list
+        pairs = cd.all_pairs()
+        if not pairs:
+            print("(alert_cooldown table kosong)")
+            return 0
+        print("Pair                          Last alert (UTC)")
+        print("─" * 60)
+        for p, ts in sorted(pairs.items(), key=lambda x: -x[1]):
+            from datetime import datetime, timezone
+            iso = datetime.fromtimestamp(ts, tz=timezone.utc).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+            print(f"{p:<30} {iso}")
+        print("─" * 60)
+        print(f"Total: {len(pairs)} entries (cooldown={cd.cooldown_minutes}m)")
+        return 0
+
+
+def _run_one_scan_cycle(
+    timeframe: str,
+    top_n: int,
+    cooldown: CooldownManager,
+    bot: TelegramBot,
+) -> tuple[int, int]:
+    """
+    Jalankan 1 siklus scan: load watchlist, hitung confluence semua pair,
+    ambil top-N valid (A+/valid), filter by cooldown, kirim. Return
+    tuple (sent_count, skipped_cooldown).
+    """
+    watchlist = load_watchlist()
+    symbols = resolve_symbols(watchlist, tier=None)
+    if not symbols:
+        logger.error("Watchlist kosong")
+        return (0, 0)
+
+    results: list[dict] = []
+    with CandleDB() as db:
+        for sym in symbols:
+            res = _scan_symbol(db, sym, timeframe)
+            if res is None:
+                continue
+            sym_res = dict(res)
+            sym_res["symbol"] = sym
+            # Hanya ambil yang punya direction valid (skip auto-drop)
+            if sym_res.get("direction") in (None, "", "None"):
+                continue
+            results.append(sym_res)
+
+    # Sort: score desc, lalu grade A+ diprioritaskan
+    grade_rank = {GRADE_A_PLUS: 2, GRADE_VALID: 1, GRADE_SKIP: 0}
+
+    def _rank(r: dict) -> tuple:
+        return (grade_rank.get(str(r.get("grade", "")).lower(), 0), r.get("score", 0))
+
+    results_sorted = sorted(results, key=_rank, reverse=True)
+
+    # Filter: hanya A+ & valid (skip sudah di-drop)
+    eligible = [r for r in results_sorted if r.get("grade") in (GRADE_A_PLUS, GRADE_VALID)]
+
+    sent = 0
+    skipped = 0
+    for r in eligible[:top_n]:
+        pair = r["symbol"]
+        if not cooldown.should_alert(pair):
+            logger.debug(f"Cooldown skip: {pair}")
+            skipped += 1
+            continue
+        text = format_signal(r, timeframe=timeframe)
+        if text is None:
+            continue
+        ok = bot.send_message(text)
+        if ok:
+            cooldown.mark_alerted(pair)
+            sent += 1
+            logger.info(f"Alert sent: {pair} ({r.get('grade')} {r.get('score')}/4)")
+        else:
+            logger.warning(f"Alert failed: {pair}")
+    return (sent, skipped)
+
+
+def cmd_daemon(args: argparse.Namespace) -> int:
+    """
+    Daemon mode: loop forever, scan setiap --interval detik, kirim top-N alert.
+    Graceful shutdown via Ctrl+C (SIGINT) atau SIGTERM.
+    """
+    timeframe = args.timeframe
+    interval = args.interval
+    top_n = args.top_n
+
+    logger.info(
+        f"Daemon start: timeframe={timeframe}, interval={interval}s, "
+        f"top_n={top_n}, cooldown={ALERT_COOLDOWN_MINUTES}m"
+    )
+
+    bot = TelegramBot()
+    if not bot.is_configured:
+        logger.warning(
+            "Telegram bot TIDAK configured — alert akan di-log ke console saja. "
+            "Set TELEGRAM_BOT_TOKEN & TELEGRAM_CHAT_ID di .env untuk kirim real."
+        )
+
+    # Graceful shutdown
+    stop_requested = {"flag": False}
+
+    def _handle_signal(signum, _frame):  # noqa: ANN001
+        signame = signal.Signals(signum).name
+        logger.warning(f"Received {signame} — shutting down daemon gracefully...")
+        stop_requested["flag"] = True
+
+    signal.signal(signal.SIGINT, _handle_signal)
+    signal.signal(signal.SIGTERM, _handle_signal)
+
+    cycle = 0
+    try:
+        with CooldownManager(cooldown_minutes=ALERT_COOLDOWN_MINUTES) as cd:
+            while not stop_requested["flag"]:
+                cycle += 1
+                cycle_start = time.time()
+                try:
+                    sent, skipped = _run_one_scan_cycle(
+                        timeframe=timeframe,
+                        top_n=top_n,
+                        cooldown=cd,
+                        bot=bot,
+                    )
+                    logger.info(
+                        f"[cycle {cycle}] sent={sent}, "
+                        f"cooldown_skip={skipped}, "
+                        f"elapsed={time.time() - cycle_start:.1f}s"
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception(f"[cycle {cycle}] error: {exc}")
+
+                # Cleanup cooldown table (best-effort) sekali per cycle
+                try:
+                    cd.cleanup_old(max_age_hours=24)
+                except Exception:  # noqa: BLE001
+                    pass
+
+                if stop_requested["flag"]:
+                    break
+
+                # Sleep dalam slice pendek supaya SIGINT cepat di-respons
+                slept = 0.0
+                while slept < interval and not stop_requested["flag"]:
+                    time.sleep(min(1.0, interval - slept))
+                    slept += 1.0
+    finally:
+        bot.close()
+        logger.info(f"Daemon stopped after {cycle} cycle(s).")
+    return 0
+
+
 # --- Argparse ---
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -354,6 +598,70 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"Highlight simbol dengan confluence score >= nilai ini (default: {CONFLUENCE_MIN_VALID}).",
     )
     p_scan.set_defaults(func=cmd_scan)
+
+    # daemon (Phase 4)
+    p_daemon = sub.add_parser(
+        "daemon",
+        help=(
+            "Loop forever: scan watchlist, hitung confluence, kirim top-N "
+            "alert ke Telegram. Ctrl+C untuk stop."
+        ),
+    )
+    p_daemon.add_argument(
+        "--timeframe",
+        "-t",
+        choices=VALID_TIMEFRAMES,
+        default=DEFAULT_TIMEFRAME,
+        help=f"Timeframe candle (default: {DEFAULT_TIMEFRAME}).",
+    )
+    p_daemon.add_argument(
+        "--interval",
+        "-i",
+        type=int,
+        default=SCAN_INTERVAL_SECONDS,
+        help=(
+            f"Interval antar scan (detik, default: {SCAN_INTERVAL_SECONDS})."
+        ),
+    )
+    p_daemon.add_argument(
+        "--top-n",
+        type=int,
+        default=ALERT_TOP_N,
+        help=f"Jumlah sinyal teratas yang dikirim per siklus (default: {ALERT_TOP_N}).",
+    )
+    p_daemon.set_defaults(func=cmd_daemon)
+
+    # test-alert (Phase 4)
+    sub.add_parser(
+        "test-alert",
+        help=(
+            "Kirim sample alert (placeholder data) ke Telegram untuk "
+            "verifikasi konfigurasi bot. Print ke console kalau token kosong."
+        ),
+    ).set_defaults(func=cmd_test_alert)
+
+    # cooldown (Phase 4)
+    p_cd = sub.add_parser(
+        "cooldown",
+        help="Manage alert_cooldown table (list / --clear [pair] / --clear-all).",
+    )
+    p_cd.add_argument(
+        "--clear",
+        metavar="PAIR",
+        nargs="?",
+        const="",  # bare --clear (tanpa argumen) -> hapus semua
+        default=None,
+        help=(
+            "Hapus cooldown. Tanpa argumen: hapus semua. "
+            "Dengan pair: hapus cooldown untuk pair itu."
+        ),
+    )
+    p_cd.add_argument(
+        "--clear-all",
+        action="store_true",
+        help="Hapus semua entry cooldown (alias: --clear tanpa argumen).",
+    )
+    p_cd.set_defaults(func=cmd_cooldown)
 
     return parser
 

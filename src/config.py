@@ -74,6 +74,26 @@ VALID_SIZE_MULTIPLIER: float = 1.0
 SKIP_SIZE_MULTIPLIER: float = 0.0
 MIN_RISK_REWARD: float = 2.0  # R:R minimum 1:2 (TP >= 2x jarak SL)
 
+# --- Telegram Alert System (Phase 4) ---
+# Bot token & chat id dibaca dari .env via python-dotenv (lihat alerts/telegram.py).
+# Default kosong string = graceful degradation (alert dicetak ke console saja).
+TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID", "")
+
+# Cooldown antar alert untuk pair yang sama (menit). Default 15.
+ALERT_COOLDOWN_MINUTES: int = int(os.getenv("ALERT_COOLDOWN_MINUTES", "15"))
+
+# Interval scan daemon (detik). Default 5 menit.
+SCAN_INTERVAL_SECONDS: int = int(os.getenv("SCAN_INTERVAL_SECONDS", "300"))
+
+# Jumlah sinyal teratas yang dikirim per siklus scan (ranking by score).
+ALERT_TOP_N: int = int(os.getenv("ALERT_TOP_N", "5"))
+
+# --- Alert emojis (Phase 4) ---
+A_PLUS_EMOJI: str = "⭐"
+VALID_EMOJI: str = "🟢"
+SKIP_EMOJI: str = "⚪"
+
 
 def ensure_dirs() -> None:
     """Pastikan semua direktori yang dibutuhkan sudah ada."""

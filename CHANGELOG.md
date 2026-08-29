@@ -81,13 +81,52 @@ Format: [Semantic Versioning](https://semver.org/)
 
 ---
 
-## [0.4.0] — Planned
+## [0.4.0] — 2026-08-29
 
 ### Phase 4: Telegram Alert System
-- Alert format (entry/SL/TP/confluence score)
-- Cooldown logic (15min per pair)
-- Top 5 ranking
-- Daily digest
+
+#### Added
+- ✅ `alerts/telegram.py` — `TelegramBot` class (httpx-based, no python-telegram-bot overhead). `send_message(text)` returns bool. Graceful degradation: kalau `TELEGRAM_BOT_TOKEN` atau `TELEGRAM_CHAT_ID` kosong, log ke console & return False (no crash)
+- ✅ `alerts/formatter.py` — `format_signal(latest_confluence_result)` — render dict ke string alert Telegram sesuai template Chastiefol-style. Skip grade → return None (tidak dikirim)
+- ✅ `alerts/cooldown.py` — `CooldownManager` (SQLite-backed, table `alert_cooldown(pair TEXT PRIMARY KEY, last_alert_at INTEGER)`). Methods: `should_alert(pair)`, `mark_alerted(pair)`, `clear(pair=None)`, `cleanup_old(max_age_hours=24)`
+- ✅ `main.py daemon` — loop forever, scan watchlist, hitung confluence, kirim top-N alert dengan cooldown per pair. Graceful shutdown via SIGINT/SIGTERM. Args: `--timeframe`, `--interval`, `--top-n`
+- ✅ `main.py test-alert` — kirim sample alert (placeholder data) untuk verifikasi Telegram config. Print ke console kalau token kosong
+- ✅ `main.py cooldown` — list/clear cooldown table. Subcommands: `--clear [PAIR]`, `--clear-all`
+- ✅ Konstanta baru di `src/config.py`: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `ALERT_COOLDOWN_MINUTES` (15), `SCAN_INTERVAL_SECONDS` (300), `ALERT_TOP_N` (5), `A_PLUS_EMOJI` ⭐, `VALID_EMOJI` 🟢, `SKIP_EMOJI` ⚪
+- ✅ `tests/test_alerts.py` — 35 unit tests (13 cooldown, 13 formatter, 9 telegram httpx mock)
+- ✅ `httpx>=0.27.0` ditambahkan ke `requirements.txt`
+- ✅ `.env.example` (sudah ada, diperkaya dengan dokumentasi lengkap)
+
+#### Changed
+- 🔁 `main.py` subparser sekarang punya 7 command: `status`, `fetch`, `cleanup`, `scan`, `daemon`, `test-alert`, `cooldown`
+- 🔁 README Quick Start diperluas dengan step-by-step Telegram bot setup + daemon usage
+
+#### Notes
+- Cooldown default 15 menit per pair — override via `ALERT_COOLDOWN_MINUTES` di `.env`
+- Daemon ranking: grade A+ diprioritaskan di atas valid; score sebagai tie-breaker
+- Total test suite: **87 passed, 2 skipped** (skip = live-network test, butuh akses Binance)
+- Sample alert (A+ setup, placeholder data, no token):
+  ```
+  ⭐ RX-0 SIGNAL — A+ 1H
+  ━━━━━━━━━━━━━━━
+  Pair:       BTC/USDT
+  TF:         1H
+  Score:      4/4
+  Grade:      A+
+  Direction:  LONG
+  Entry:      $62,450.00
+  SL:         $62,180.00 (-0.43%)
+  TP1:        $62,990.00 (+0.86%)
+  TP2:        $63,530.00 (+1.73%)
+  R:R:        1:2.0 / 1:4.0
+  Regime:     trending
+  Confluence:
+    ✓ Luminance breakout
+    ✓ RSI regime aligned
+    ✓ BOS confirm
+    ✓ WaveTrend cross
+  Time:       2026-08-29 06:07 UTC
+  ```
 
 ---
 

@@ -2,7 +2,7 @@
 
 > **Crypto trading bot bertenaga AI dengan strategi LuxAlgo-grade — dibangun dari nol untuk profit konsisten.**
 
-[![Status](https://img.shields.io/badge/status-Phase%203%20Development-yellow)]()
+[![Status](https://img.shields.io/badge/status-Phase%204%20Complete-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-Private-red)]()
 
@@ -80,8 +80,8 @@ Berdasarkan riset dari [LuxAlgo Library](https://www.luxalgo.com/library/), RX-0
 |------|------|--------|--------|----------|
 | **1** | **Data Foundation** | ✅ Done | Candle puller + SQLite + watchlist | 1-2 hari |
 | **2** | **Core Indicator Engine** | ✅ Done | Luminance + RSI Regime + BOS/CHoCH + WaveTrend (Python port) | 3-4 hari |
-| **3** | **Confluence Scorer** | 🟡 In Progress | 0-4 scoring logic, entry rules | 1 hari |
-| 4 | Telegram Alert System | ⏳ Pending | Alert format + cooldown + top 5 ranking | 1-2 hari |
+| **3** | **Confluence Scorer** | ✅ Done | 0-4 scoring logic, entry rules, position sizing | 1 hari |
+| **4** | **Telegram Alert System** | ✅ Done | Alert format + cooldown + daemon + top-N ranking | 1-2 hari |
 | 5 | Backtest Engine | ⏳ Pending | Historical replay + 6 metrics + equity curve | 2-3 hari |
 | 6 | Paper Trading | ⏳ Pending | Dry-run 2-4 minggu, real-time win rate tracking | 2-4 minggu |
 | 7 | Auto-Trade Layer | ⏳ Pending | CCXT live execution + risk guard + kill switch | 3-5 hari |
@@ -113,27 +113,91 @@ pytest>=7.0.0        # Testing
 
 ---
 
-## 🚀 Quick Start (Coming Soon)
+## 🚀 Quick Start
+
+### 1. Setup Environment
 
 ```bash
-# 1. Clone & setup
-git clone https://github.com/[username]/rx0-unicorn.git
-cd rx0-unicorn
+# Clone
+git clone https://github.com/fataakromulm/RX-0-Unicorn.git
+cd RX-0-Unicorn
+
+# Virtualenv (Python 3.10+)
+python3 -m venv .venv
+source .venv/bin/activate
+
+# Install deps
 pip install -r requirements.txt
 
-# 2. Fetch initial data
+# (Optional) Copy .env template — needed only for real Telegram alerts
+cp .env.example .env
+# Edit .env dan isi TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID (lihat step 4)
+```
+
+### 2. Fetch Initial Data
+
+```bash
+# Tarik 500 candle 1H untuk semua watchlist (BTC, ETH, SOL, dll)
 python main.py fetch --tier tier_1_major --timeframe 1h --limit 500
 
-# 3. Check status
+# Cek row count di DB
 python main.py status
-
-# 4. Run scanner (Phase 2 indicators + Phase 3 confluence scoring)
-python main.py scan --timeframe 1h
-python main.py scan --symbol BTC/USDT --timeframe 1h --min-score 3
-
-# 5. (Phase 4) Start alert daemon
-python main.py daemon --interval 300
 ```
+
+### 3. Run Scanner (Phase 2 + Phase 3 confluence)
+
+```bash
+# Scan semua watchlist, tampilkan Grade/SL/TP
+python main.py scan --timeframe 1h
+
+# Single symbol + filter minimum score
+python main.py scan --symbol BTC/USDT --timeframe 1h --min-score 3
+```
+
+### 4. Setup Telegram Bot (Optional, untuk Phase 4)
+
+1. Chat ke **@BotFather** di Telegram → `/newbot` → ikuti instruksi → copy token
+2. Chat ke **@userinfobot** atau **@get_id_bot** → catat chat ID kamu
+3. Edit `.env`:
+   ```env
+   TELEGRAM_BOT_TOKEN=1234567890:ABCdefGHIjklMNOpqrSTUvwxYZ
+   TELEGRAM_CHAT_ID=633709469
+   ```
+4. Test koneksi:
+   ```bash
+   python main.py test-alert
+   # Harus muncul "Telegram send OK — check your chat!"
+   ```
+   Kalau token kosong, sample alert di-print ke console (tidak crash).
+
+### 5. Start Alert Daemon (Phase 4)
+
+```bash
+# Loop forever: scan + kirim top-5 alert ke Telegram setiap 5 menit
+python main.py daemon --timeframe 1h --interval 300
+
+# Override top-N dan interval
+python main.py daemon --timeframe 4h --interval 900 --top-n 3
+
+# Stop dengan Ctrl+C — graceful shutdown
+```
+
+### 6. Manage Cooldown
+
+```bash
+# Lihat semua pair yang sedang cooldown
+python main.py cooldown
+
+# Clear cooldown untuk satu pair
+python main.py cooldown --clear BTC/USDT
+
+# Clear semua cooldown
+python main.py cooldown --clear-all
+```
+
+> **Catatan:** Cooldown disimpan di SQLite table `alert_cooldown`. Default
+> 15 menit per pair (override via `ALERT_COOLDOWN_MINUTES` di .env). Mencegah
+> spam alert untuk pair yang sama.
 
 ---
 
@@ -159,8 +223,10 @@ luxalgo-trader/
 │   └── wavetrend.py                # WaveTrend Oscillator
 ├── confluence/                      # Phase 3 ✅
 │   └── scorer.py                    # score_confluence() / latest_confluence()
-├── alerts/                         # Phase 4
-│   └── telegram.py
+├── alerts/                          # Phase 4 ✅
+│   ├── telegram.py                  # TelegramBot (httpx-based)
+│   ├── formatter.py                 # format_signal() — alert text template
+│   └── cooldown.py                  # CooldownManager (SQLite-backed)
 ├── backtest/                       # Phase 5
 │   ├── engine.py
 │   └── metrics.py
@@ -250,15 +316,25 @@ Saat backtest & paper trading jalan, RX-0 Unicorn diukur dengan **6 metrics waji
 - [x] `main.py scan` CLI preview + unit tests (32 tests, synthetic OHLCV)
 - [ ] (Coming) Formal Confluence Scorer module (Phase 3)
 
-### Phase 3 — Confluence Scorer (Current)
+### Phase 3 — Confluence Scorer ✅
 - [x] `confluence/scorer.py` — skor 0-4 per bar, grade skip/valid/A+
 - [x] Risk levels: entry, SL, TP1 (1R), TP2 (2R), risk_reward
 - [x] `main.py scan` dipindah ke Confluence Scorer resmi
 - [x] Unit tests (15 tests: score bounds, grade consistency, risk ordering)
-- [ ] (Coming) Telegram Alert System (Phase 4)
 
-### Phase 4-7 (Planned)
-- Telegram alerts, backtest engine, paper trading, auto-trade
+### Phase 4 — Telegram Alert System ✅
+- [x] `alerts/telegram.py` — `TelegramBot` (httpx, graceful degradation kalau token kosong)
+- [x] `alerts/formatter.py` — `format_signal()` sesuai template Chastiefol-style
+- [x] `alerts/cooldown.py` — `CooldownManager` (SQLite `alert_cooldown` table)
+- [x] `main.py daemon` — loop forever scan + kirim top-N alert
+- [x] `main.py test-alert` — verifikasi bot config
+- [x] `main.py cooldown` — list/clear per-pair cooldown
+- [x] `.env.example` — template TELEGRAM_BOT_TOKEN/CHAT_ID
+- [x] Unit tests (35 tests: cooldown logic, formatter edge cases, httpx mock)
+- [ ] (Coming) Daily digest
+
+### Phase 5-7 (Planned)
+- Backtest engine, paper trading, auto-trade
 
 ---
 

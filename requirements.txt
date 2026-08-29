@@ -1,10 +1,12 @@
-# RX-0 Unicorn - Phase 1 (Data Foundation) + Phase 2 (Indicator Engine)
+# RX-0 Unicorn - Phase 1 (Data Foundation) + Phase 2 (Indicators) + Phase 3 (Confluence) + Phase 4 (Telegram Alerts)
 # Core dependencies
 ccxt>=4.0.0
 pandas>=2.0.0
 numpy>=1.24.0
 loguru>=0.7.0
 python-dotenv>=1.0.0
+httpx>=0.27.0          # Phase 4 — Telegram Bot API client (lighter than python-telegram-bot)
 
 # Development dependencies
 pytest>=7.0.0
+pytest-mock>=3.10.0
