@@ -431,6 +431,38 @@ class PaperPortfolio:
             f"new_balance=${new_balance:.2f} equity=${equity_after:.2f} "
             f"dd={dd:.2%}"
         )
+        # Tier 2: Telegram exit notification (BUG FIX: was missing)
+        if self.notifier is not None:
+            try:
+                closed_trade = self.journal.get_trade_by_id(trade_id) or {}
+                # Compute hold time in hours
+                entry_time = closed_trade.get("entry_time")
+                exit_ts = int(exit_time if exit_time is not None else time.time())
+                if entry_time:
+                    hold_hours = (exit_ts - int(entry_time)) / 3600.0
+                else:
+                    hold_hours = 0.0
+                # Compute daily P/L for context
+                daily_pnl = self.journal.daily_pnl_today()
+                self.notifier.notify_exit({
+                    "trade_id": trade_id,
+                    "symbol": closed_trade.get("symbol", "?"),
+                    "direction": closed_trade.get("direction", "?"),
+                    "grade": closed_trade.get("grade", "?"),
+                    "entry_price": closed_trade.get("entry_price", 0),
+                    "exit_price": exit_price,
+                    "pnl_usd": pnl,
+                    "pnl_pct": pnl / max(1.0, trade.get("risk_usd", 1.0)) if trade.get("risk_usd") else 0.0,
+                    "r_multiple": r_multiple,
+                    "hold_time_hours": hold_hours,
+                    "exit_reason": exit_reason,
+                    "daily_pnl_usd": daily_pnl,
+                    "daily_pnl_pct": daily_pnl / max(1.0, self.get_initial_balance()),
+                    "equity": equity_after,
+                    "win_rate": 0.0,  # notifier doesn't use this; computed at report level
+                })
+            except Exception as exc:  # noqa: BLE001
+                logger.error(f"[portfolio] notify_exit failed: {exc}")
         return self.journal.get_trade_by_id(trade_id) or {}
 
     def adjust_sl_to_breakeven(

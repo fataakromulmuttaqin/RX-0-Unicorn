@@ -126,7 +126,7 @@ class PaperNotifier:
             f"🆔 `{trade_id}`\n"
             f"🕒 {_now_iso()}\n"
         )
-        return self._send(body, tier=TIER_ENTRY, parse_mode="Markdown")
+        return self._send(body, tier=TIER_ENTRY, parse_mode=None)
 
     # --- Tier 2: exit ---
     def notify_exit(self, trade: dict[str, Any]) -> bool:
@@ -167,7 +167,7 @@ class PaperNotifier:
             f"🆔 `{trade_id}`\n"
             f"🕒 {_now_iso()}\n"
         )
-        return self._send(body, tier=TIER_EXIT, parse_mode="Markdown")
+        return self._send(body, tier=TIER_EXIT, parse_mode=None)
 
     # --- Tier 3: daily digest ---
     def notify_daily_digest(
@@ -208,7 +208,7 @@ class PaperNotifier:
             f"📉 Drawdown      : `{_fmt_pct(drawdown)}`\n"
             f"🕒 {_now_iso()}\n"
         )
-        return self._send(body, tier=TIER_DAILY, parse_mode="Markdown")
+        return self._send(body, tier=TIER_DAILY, parse_mode=None)
 
     # --- Tier 4: weekly report ---
     def notify_weekly_report(
@@ -266,7 +266,7 @@ class PaperNotifier:
             body_lines.append(f"📎 Chart: `{chart_path}`")
         body_lines.append(f"🕒 {_now_iso()}")
         body = "\n".join(body_lines)
-        return self._send(body, tier=TIER_WEEKLY, parse_mode="Markdown")
+        return self._send(body, tier=TIER_WEEKLY, parse_mode=None)
 
     # --- Tier 5: risk breach ---
     def notify_risk_breach(
@@ -296,7 +296,7 @@ class PaperNotifier:
                 body_lines.append(f"   • {k}: `{v}`")
         body_lines.append(f"🕒 {_now_iso()}")
         body = "\n".join(body_lines)
-        return self._send(body, tier=TIER_RISK, parse_mode="Markdown")
+        return self._send(body, tier=TIER_RISK, parse_mode=None)
 
     # --- Internal ---
     def _send(self, text: str, *, tier: int, parse_mode: str | None) -> bool:
