@@ -219,25 +219,58 @@ def passes_filter(symbol: str, df, conf: dict) -> tuple[bool, str]:
 def get_signals():
     """
     Get all signals (score >= CONFLUENCE_MIN_VALID) with quality filters.
+
+    Multi-timeframe architecture (per user's spec):
+    - 4H: bias check (EMA 50/200 + market structure)
+    - 1H: confluence validation against 4H bias
+    - Entry: 15m for precision, or 1H if strong momentum
+
     Filters: volume spike, ADX trending, tight spread.
     """
+    from confluence.mtf import get_mtf_bias_and_confluence
+
     sigs = []
     for symbol in all_pairs:
         try:
+            # Step 1: 4H bias check
+            mtf = get_mtf_bias_and_confluence(symbol)
+            if not mtf.get("aligned"):
+                logger.debug(f"  ⏭ {symbol} MTF: {mtf.get('reason', 'not aligned')}")
+                continue
+            if mtf.get("bias_4h") == 0:
+                logger.debug(f"  ⏭ {symbol}: 4H bias neutral")
+                continue
+
+            # Step 2: 1H confluence
             df = cdb.get_candles(pair=symbol, timeframe="1h", limit=200)
             if df is None or len(df) < 60:
                 continue
             conf = latest_confluence(df)
             if not conf or conf.get("score", 0) < CONFLUENCE_MIN_VALID:
                 continue
-            # Apply quality filters
+
+            # Step 3: Direction must match 4H bias
+            conf_dir = str(conf.get("direction", "long") or "long").lower()
+            if mtf["bias_4h"] == 1 and conf_dir != "long":
+                logger.debug(f"  ⏭ {symbol}: 4H bullish but 1H signal is short")
+                continue
+            if mtf["bias_4h"] == -1 and conf_dir != "short":
+                logger.debug(f"  ⏭ {symbol}: 4H bearish but 1H signal is long")
+                continue
+
+            # Step 4: Quality filters (volume, ADX, spread)
             passes, reason = passes_filter(symbol, df, conf)
             if not passes:
                 logger.debug(f"  ⏭ {symbol} filtered: {reason}")
                 continue
+
+            # All checks passed
             conf["symbol"] = symbol
             conf["entry_price"] = conf.get("entry_price") or float(df["close"].iloc[-1])
             conf["filter_reason"] = "ok"
+            conf["htf_bias_4h"] = mtf.get("bias_4h")
+            conf["htf_strength_4h"] = mtf.get("strength_4h")
+            conf["entry_timeframe"] = "1h"  # 15m entry is checked separately in monitor
             sigs.append(conf)
         except Exception as e:
             logger.debug(f"signal {symbol}: {e}")
