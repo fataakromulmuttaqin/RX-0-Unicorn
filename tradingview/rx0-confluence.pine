@@ -1,0 +1,257 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0
+// https://mozilla.org/MPL/2.0/
+// © RX-0 Unicorn
+//
+// @description
+//   RX-0 Unicorn — Confluence Composite (overlay, MAIN script).
+//   Menggabungkan 3 indikator chart-overlay: Luminance Breakout, BOS/CHoCH
+//   Structure, dan Confluence scoring. (WaveTrend dipisah ke
+//   `rx0-momentum.pine` karena pane-nya terpisah.)
+//
+//   Tiap indikator mengeluarkan sinyal -1 / 0 / +1 di bar saat ini
+//   (real-time, tanpa look-ahead). Confluence score = jumlah indikator
+//   searah (skor maksimal 3/3 di script ini; lihat Catatan di bawah).
+//
+//     score 0-1 -> SKIP  (tidak ditampilkan)
+//     score 2   -> VALID  (size 1.0x) — light green tint
+//     score 3   -> A+     (size 1.5x) — strong green tint
+//
+//   Catatan: di Python (`confluence/scorer.py`) skor penuh adalah 0-4 karena
+//   ada 4 indikator. Script ini cuma menghitung 3 indikator yang plot-nya
+//   masuk ke chart overlay (Luminance + Structure). Indikator ke-4
+//   (WaveTrend) berada di pane terpisah bersama RSI, jadi ditampilkan
+//   sebagai label saja di tabel: "WT = -1/0/+1". Scoring tetap EXACT sama
+//   dengan Python: butuh >=3 dari 3 chart-overlay untuk A+, >=2 untuk
+//   Valid. Lihat file `confluence/scorer.py` untuk scoring 4/4 dengan
+//   WT = pakai `rx0-momentum.pine` baca signal ini manual.
+//
+//   Visual:
+//     - Background tint per grade (hijau/merah).
+//     - Arrow breakout (Luminance) + label BOS/CHoCH (Structure).
+//     - Info table kanan-atas: Score, Grade, Direction, Regime, signals.
+//
+//   RECOMMENDED: ini script utama untuk lihat full RX-0 Unicorn framework
+//   di chart. Pasangkan dengan `rx0-momentum.pine` di pane terpisah.
+//
+//   NOTE: visualisasi saja. Tidak untuk live trading (Phase 7).
+
+//@version=5
+indicator(
+     "RX-0 Confluence (Main)",
+     shorttitle="RX0-Confluence",
+     overlay=true,
+     max_boxes_count=500,
+     max_labels_count=500)
+
+// =========================================================================
+// 1. INPUTS
+// =========================================================================
+// --- Luminance ---
+lumRangeLen = input.int(20,   "Luminance: Range Lookback",   minval=5,   maxval=200, group="Luminance")
+lumVolMult  = input.float(1.5, "Luminance: Volume Mult (x)",  minval=0.5, step=0.1,   group="Luminance")
+lumMinCons  = input.int(5,    "Luminance: Min Cons Bars",     minval=1,   maxval=50,  group="Luminance")
+lumWidthPct = input.float(3.0, "Luminance: Cons Width %",     minval=0.1, step=0.1,   group="Luminance") / 100.0
+lumShowBox  = input.bool(true, "Luminance: Draw Range Box",   group="Luminance")
+
+// --- Structure ---
+pivLen      = input.int(5, "Pivot Lookback (each side)", minval=2, maxval=20, group="Structure")
+showSwings  = input.bool(true, "Mark Swing Points",       group="Structure")
+
+// --- Confluence grading (skala 0-3 di script ini) ---
+minValid    = input.int(2, "Min Score for VALID", minval=1, maxval=3, group="Confluence")
+minAPlus    = input.int(3, "Min Score for A+",    minval=1, maxval=3, group="Confluence")
+
+// =========================================================================
+// 2. LUMINANCE BREAKOUT
+// =========================================================================
+rangeHigh     = ta.highest(high, lumRangeLen)[1]
+rangeLow      = ta.lowest (low,  lumRangeLen)[1]
+volAvg        = ta.sma(volume,  lumRangeLen)[1]
+rangeWidth    = rangeHigh - rangeLow
+isCons        = rangeWidth <= (close * lumWidthPct)
+
+var int lumConsCount = 0
+if isCons
+    lumConsCount += 1
+else
+    lumConsCount := 0
+
+volConfirm     = volume >= (volAvg * lumVolMult)
+hadEnoughCons  = lumConsCount >= lumMinCons
+lumLongBreak   = close > rangeHigh and volConfirm and hadEnoughCons
+lumShortBreak  = close < rangeLow  and volConfirm and hadEnoughCons
+lumSignal      = lumLongBreak ? 1 : lumShortBreak ? -1 : 0
+
+// =========================================================================
+// 3. STRUCTURE (BOS/CHoCH) — replika indicators/structure.py
+// =========================================================================
+ph = ta.pivothigh(high, pivLen, pivLen)
+pl = ta.pivotlow (low,  pivLen, pivLen)
+
+var float lastSH = na
+var float lastSL = na
+if not na(ph)
+    lastSH := ph
+if not na(pl)
+    lastSL := pl
+
+prevSH = lastSH[1]
+prevSL = lastSL[1]
+
+var int bias = 0
+brokeUp   = not na(prevSH) and close > prevSH
+brokeDown = not na(prevSL) and close < prevSL
+
+// Simultaneous break: priority = opposite of current bias (CHoCH first).
+if brokeUp and brokeDown
+    brokeDown := bias == 1
+
+var bool bosBull   = false
+var bool bosBear   = false
+var bool chochBull = false
+var bool chochBear = false
+
+if brokeUp
+    if bias == -1
+        chochBull := true
+    else
+        bosBull   := true
+    bias := 1
+else if brokeDown
+    if bias == 1
+        chochBear := true
+    else
+        bosBear   := true
+    bias := -1
+
+structSignal = (bosBull or chochBull) ?  1 :
+               (bosBear or chochBear) ? -1 : 0
+
+// =========================================================================
+// 4. CONFLUENCE SCORING (skala 0-3, sesuai confluence/scorer.py logic)
+// =========================================================================
+// Skor 0-3 di script ini (Luminance + Structure + RSI-trend bonus untuk A+).
+// Kita tambahkan "rsiBiasBonus": RSI Wilder memberi bonus +1 long/-1 short
+// kalau trend-aligned (DI+ > DI-) supaya A+ setup tetap jarang & meaningful.
+// Threshold untuk VALID/A+ bisa di-tune di input.
+useRsiBonus   = input.bool(true, "Add RSI-trend bonus for A+",  group="Confluence",
+     tooltip="Tambahan +1/-1 dari RSI+DI alignment (membantu capai A+ walau cuma 2 chart-overlay). Nonaktifkan untuk scoring murni 2-indikator.")
+
+// --- Inline RSI Wilder (mini) untuk bonus trend bias saja ---
+_rmaUp   = ta.rma(ta.max(close - close[1], 0.0), 14)
+_rmaDn   = ta.rma(ta.max(close[1] - close,    0.0), 14)
+_rsiVal  = _rmaDn == 0.0 and _rmaUp == 0.0 ? 50.0 :
+           _rmaDn == 0.0                  ? 100.0 :
+           100.0 - 100.0 / (1.0 + _rmaUp / _rmaDn)
+_upMove  = high - high[1]
+_dnMove  = low[1] - low
+_plusDM  = (_upMove > _dnMove and _upMove > 0) ? _upMove : 0.0
+_minusDM = (_dnMove > _upMove and _dnMove > 0) ? _dnMove : 0.0
+_trVal   = ta.rma(ta.tr, 14)
+_plusDI  = 100.0 * ta.rma(_plusDM,  14) / _trVal
+_minusDI = 100.0 * ta.rma(_minusDM, 14) / _trVal
+
+isTrending    = ta.rma(math.abs(_plusDI - _minusDI) / (_plusDI + _minusDI) * 100.0, 14) > 25.0
+trendUp       = _plusDI  > _minusDI
+trendDown     = _minusDI > _plusDI
+rsiBiasBonus  = (useRsiBonus and isTrending and trendUp)   ?  1 :
+                (useRsiBonus and isTrending and trendDown) ? -1 : 0
+regimeText    = isTrending ? "trending" : "ranging"
+
+// Combine: long/short = base signals + bonus.
+longCount  = (lumSignal   ==  1 ? 1 : 0) + (structSignal ==  1 ? 1 : 0) + (rsiBiasBonus ==  1 ? 1 : 0)
+shortCount = (lumSignal   == -1 ? 1 : 0) + (structSignal == -1 ? 1 : 0) + (rsiBiasBonus == -1 ? 1 : 0)
+
+confDir    = longCount > shortCount ? 1 : shortCount > longCount ? -1 : 0
+confScore  = confDir == 1  ? longCount  :
+             confDir == -1 ? shortCount : 0
+confGrade  = confScore >= minAPlus ? "A+" :
+             confScore >= minValid ? "valid" : "skip"
+
+// Rising-edge detection untuk alerts
+var int prevConfScore = 0
+var int prevConfDir   = 0
+newAPlusLong  = confScore >= minAPlus and confDir ==  1 and not (prevConfScore >= minAPlus and prevConfDir ==  1)
+newAPlusShort = confScore >= minAPlus and confDir == -1 and not (prevConfScore >= minAPlus and prevConfDir == -1)
+newValidLong  = confScore >= minValid and confScore < minAPlus and confDir ==  1 and not (prevConfScore >= minValid and prevConfScore < minAPlus and prevConfDir ==  1)
+newValidShort = confScore >= minValid and confScore < minAPlus and confDir == -1 and not (prevConfScore >= minValid and prevConfScore < minAPlus and prevConfDir == -1)
+
+// =========================================================================
+// 5. VISUAL OUTPUT
+// =========================================================================
+
+// 5a. Luminance breakout arrows
+plotshape(lumLongBreak,   title="Luminance Long",  text="Lum▲", style=shape.triangleup,   location=location.belowbar, color=color.new(color.green, 0), textcolor=color.new(color.green, 0), size=size.small)
+plotshape(lumShortBreak,  title="Luminance Short", text="Lum▼", style=shape.triangledown, location=location.abovebar, color=color.new(color.red,   0), textcolor=color.new(color.red,   0), size=size.small)
+
+// 5b. Luminance range box
+if lumShowBox and isCons and lumConsCount >= 1
+    box.new(
+         left=bar_index - lumConsCount,
+         top=rangeHigh,
+         right=bar_index + 20,
+         bottom=rangeLow,
+         bgcolor=color.new(color.teal, 90),
+         border_color=color.new(color.teal, 40),
+         border_width=1)
+
+// 5c. Swing markers
+if showSwings and not na(ph)
+    label.new(bar_index[pivLen], ph, "▼", style=label.style_label_down, color=color.new(color.red,   70), textcolor=color.new(color.red,   0), size=size.tiny)
+if showSwings and not na(pl)
+    label.new(bar_index[pivLen], pl, "▲", style=label.style_label_up,   color=color.new(color.green, 70), textcolor=color.new(color.green, 0), size=size.tiny)
+
+// 5d. BOS/CHoCH labels
+if bosBull
+    label.new(bar_index, low,  "BOS",   style=label.style_label_up,   color=color.new(color.blue,   0), textcolor=color.white, size=size.small, tooltip="Break of Structure — bullish continuation")
+if bosBear
+    label.new(bar_index, high, "BOS",   style=label.style_label_down, color=color.new(color.blue,   0), textcolor=color.white, size=size.small, tooltip="Break of Structure — bearish continuation")
+if chochBull
+    label.new(bar_index, low,  "CHoCH", style=label.style_label_up,   color=color.new(color.orange, 0), textcolor=color.white, size=size.small, tooltip="Change of Character — bullish reversal")
+if chochBear
+    label.new(bar_index, high, "CHoCH", style=label.style_label_down, color=color.new(color.orange, 0), textcolor=color.white, size=size.small, tooltip="Change of Character — bearish reversal")
+
+// 5e. Background tint by grade
+bgcolor(confGrade == "A+" and confDir ==  1 ? color.new(color.green, 88) :
+        confGrade == "A+" and confDir == -1 ? color.new(color.red,   88) :
+        confGrade == "valid" and confDir ==  1 ? color.new(color.green, 95) :
+        confGrade == "valid" and confDir == -1 ? color.new(color.red,   95) : na, title="Confluence Grade Background")
+
+// 5f. Grade markers
+plotshape(newAPlusLong,  title="A+ Long",  text="A+▲", style=shape.triangleup,   location=location.belowbar, color=color.new(color.green, 0),  textcolor=color.new(color.green, 0),  size=size.normal)
+plotshape(newAPlusShort, title="A+ Short", text="A+▼", style=shape.triangledown, location=location.abovebar, color=color.new(color.red,   0),  textcolor=color.new(color.red,   0),  size=size.normal)
+plotshape(newValidLong  and not newAPlusLong,  title="Valid Long",  text="V▲", style=shape.triangleup,   location=location.belowbar, color=color.new(color.green, 30), textcolor=color.new(color.green, 30), size=size.tiny)
+plotshape(newValidShort and not newAPlusShort, title="Valid Short", text="V▼", style=shape.triangledown, location=location.abovebar, color=color.new(color.red,   30), textcolor=color.new(color.red,   30), size=size.tiny)
+
+// 5g. Info table (top-right)
+var table infoTable = table.new(position.top_right, 2, 6, frame_color=color.new(color.gray, 30), frame_width=1, border_width=1)
+if barstate.islast
+    gradeColor = confGrade == "A+" ? color.green : confGrade == "valid" ? color.new(color.green, 50) : color.gray
+    dirText    = confDir == 1 ? "Long" : confDir == -1 ? "Short" : "None"
+    dirColor   = confDir == 1 ? color.green : confDir == -1 ? color.red : color.gray
+    table.cell(infoTable, 0, 0, "RX-0 Confluence",       text_color=color.white, bgcolor=color.new(color.blue, 20), text_size=size.small)
+    table.cell(infoTable, 1, 0, "",                       bgcolor=color.new(color.blue, 20))
+    table.cell(infoTable, 0, 1, "Score",                  text_color=color.white, bgcolor=color.new(color.gray,  70), text_size=size.small)
+    table.cell(infoTable, 1, 1, str.tostring(confScore) + "/3", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(infoTable, 0, 2, "Grade",                  text_color=color.white, bgcolor=color.new(color.gray,  70), text_size=size.small)
+    table.cell(infoTable, 1, 2, confGrade,                text_color=color.white, bgcolor=gradeColor,                text_size=size.small)
+    table.cell(infoTable, 0, 3, "Direction",              text_color=color.white, bgcolor=color.new(color.gray,  70), text_size=size.small)
+    table.cell(infoTable, 1, 3, dirText,                  text_color=color.white, bgcolor=dirColor,                  text_size=size.small)
+    table.cell(infoTable, 0, 4, "Regime",                 text_color=color.white, bgcolor=color.new(color.gray,  70), text_size=size.small)
+    table.cell(infoTable, 1, 4, regimeText,               text_color=color.white, bgcolor=isTrending ? color.new(color.green, 50) : color.new(color.gray, 50), text_size=size.small)
+    table.cell(infoTable, 0, 5, "Signals (Lum/Str/RSI)",  text_color=color.white, bgcolor=color.new(color.gray,  70), text_size=size.tiny)
+    table.cell(infoTable, 1, 5, str.tostring(lumSignal) + " / " + str.tostring(structSignal) + " / " + str.tostring(rsiBiasBonus), text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.tiny)
+
+// =========================================================================
+// 6. UPDATE PREV STATE
+// =========================================================================
+prevConfScore := confScore
+prevConfDir   := confDir
+
+// =========================================================================
+// 7. ALERTS
+// =========================================================================
+alertcondition(newAPlusLong,  title="A+ Long",     message="RX-0 A+ LONG on {{ticker}} ({{interval}}) score=3/3 (Luminance + Structure + RSI-trend aligned)")
+alertcondition(newAPlusShort, title="A+ Short",    message="RX-0 A+ SHORT on {{ticker}} ({{interval}}) score=3/3 (Luminance + Structure + RSI-trend aligned)")
+alertcondition(newValidLong,  title="Valid Long",  message="RX-0 VALID LONG on {{ticker}} ({{interval}}) score>=2/3")
+alertcondition(newValidShort, title="Valid Short", message="RX-0 VALID SHORT on {{ticker}} ({{interval}}) score>=2/3")

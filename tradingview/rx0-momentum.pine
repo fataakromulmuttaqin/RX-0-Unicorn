@@ -1,0 +1,175 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0
+// https://mozilla.org/MPL/2.0/
+// © RX-0 Unicorn
+//
+// @description
+//   RX-0 Unicorn — Momentum Pane (RSI Wilder + ADX + WaveTrend LazyBear).
+//   Menggabungkan 2 indikator momentum oscillator di pane TERPISAH:
+//
+//     1. RSI Wilder (14) — untuk timing & oversold/overbought.
+//     2. ADX (14)        — untuk klasifikasi regime (trending vs ranging).
+//     3. WaveTrend (LazyBear) — cross WT1/WT2 di zona ekstrem = entry trigger.
+//
+//   Karena RSI/ADX range 0-100 dan WaveTrend range ±100, dan ketiganya
+//   punya level yang sama (±60/70), kami plot ketiganya dalam satu pane
+//   dengan scaling yang konsisten. RSI & ADX di-scale langsung (range
+//   0-100). WT1/WT2 di-range yang sama. Color-coding:
+//
+//     - Biru solid   = RSI (trending) / abu (ranging)
+//     - Orange dash  = ADX (scaled)
+//     - Blue line    = WT1 (fast)
+//     - Red line     = WT2 (slow)
+//     - Background   = biru/abu untuk regime, hijau/merah untuk zona WT
+//
+//   Tabel info kanan-atas menampilkan Regime, RSI, WT1, dan ADX real-time.
+//
+//   Sesuai `indicators/rsi_regime.py` dan `indicators/wavetrend.py`.
+//
+//   NOTE: visualisasi saja. Tidak untuk live trading (Phase 7).
+
+//@version=5
+indicator(
+     "RX-0 Momentum (RSI + ADX + WaveTrend)",
+     shorttitle="RX0-Momentum",
+     overlay=false)
+
+// =========================================================================
+// 1. INPUTS
+// =========================================================================
+// --- RSI ---
+rsiLen   = input.int(14,   "RSI Period (Wilder)",    minval=2,   maxval=100, group="RSI")
+rsiOB    = input.float(70.0, "RSI Overbought",       minval=50.0, step=1.0,   group="RSI")
+rsiOS    = input.float(30.0, "RSI Oversold",         minval=5.0,  step=1.0,   group="RSI")
+
+// --- ADX / Regime ---
+adxLen   = input.int(14,    "ADX Period",            minval=2,    maxval=100, group="Regime")
+adxThresh= input.float(25.0, "ADX Trending Threshold", minval=5.0, step=0.5,    group="Regime")
+
+// --- WaveTrend ---
+wtChanLen = input.int(10,   "WT: Channel Length",     minval=2,   maxval=50,  group="WaveTrend")
+wtAvgLen  = input.int(21,   "WT: Average Length",     minval=2,   maxval=100, group="WaveTrend")
+wtSigLen  = input.int(4,    "WT: Signal Length",      minval=1,   maxval=50,  group="WaveTrend")
+wtOB      = input.float(60.0,  "WT Overbought",        minval=0.0, step=5.0,    group="WaveTrend")
+wtOS      = input.float(-60.0, "WT Oversold",          maxval=0.0, step=5.0,    group="WaveTrend")
+
+// =========================================================================
+// 2. RSI WILDER (alpha = 1/period, identik dengan Python _wilder_rma)
+// =========================================================================
+rmaUp   = ta.rma(ta.max(close - close[1], 0.0), rsiLen)
+rmaDn   = ta.rma(ta.max(close[1] - close,    0.0), rsiLen)
+rsiVal  = rmaDn == 0.0 and rmaUp == 0.0 ? 50.0 :
+          rmaDn == 0.0                  ? 100.0 :
+          100.0 - 100.0 / (1.0 + rmaUp / rmaDn)
+
+// =========================================================================
+// 3. ADX (Wilder)
+// =========================================================================
+upMove   = high - high[1]
+dnMove   = low[1] - low
+plusDM   = (upMove > dnMove and upMove > 0)   ? upMove   : 0.0
+minusDM  = (dnMove > upMove and dnMove > 0)   ? dnMove   : 0.0
+trVal    = ta.rma(ta.tr, adxLen)
+plusDI   = 100.0 * ta.rma(plusDM,  adxLen) / trVal
+minusDI  = 100.0 * ta.rma(minusDM, adxLen) / trVal
+dxVal    = math.abs(plusDI - minusDI) / (plusDI + minusDI) * 100.0
+adxVal   = ta.rma(dxVal, adxLen)
+
+// =========================================================================
+// 4. WAVETREND (LazyBear formula, identik dengan indicators/wavetrend.py)
+// =========================================================================
+ap        = (high + low + close) / 3.0
+esa       = ta.ema(ap, wtChanLen)
+dVal      = ta.ema(math.abs(ap - esa), wtChanLen)
+dSafe     = dVal == 0.0 ? 0.0001 : dVal
+ci        = (ap - esa) / (0.015 * dSafe)
+wt1       = ta.ema(ci, wtAvgLen)
+wt2       = ta.sma(wt1, wtSigLen)
+
+// =========================================================================
+// 5. REGIME / CROSS STATE
+// =========================================================================
+isTrending = adxVal > adxThresh
+isRanging  = not isTrending
+trendUp    = plusDI > minusDI
+trendDown  = minusDI > plusDI
+
+// RSI anti-fade: matching Python rsi_regime.py.
+rsiPrev         = rsiVal[1]
+leavingOversold   = (rsiPrev <= rsiOS) and (rsiVal > rsiOS)
+leavingOverbought = (rsiPrev >= rsiOB) and (rsiVal < rsiOB)
+rsiLong  = (isRanging and rsiVal <= rsiOS) or (isTrending and trendUp  and leavingOversold)
+rsiShort = (isRanging and rsiVal >= rsiOB) or (isTrending and trendDown and leavingOverbought)
+regimeFlip = (isTrending and not isTrending[1]) or (isRanging and not isRanging[1])
+
+// WT cross (entry trigger)
+crossUp   = wt1 > wt2 and wt1[1] <= wt2[1]
+crossDown = wt1 < wt2 and wt1[1] >= wt2[1]
+wtLong    = crossUp   and (wt1[1] <= wtOS or wt1 <= wtOS)
+wtShort   = crossDown and (wt1[1] >= wtOB or wt1 >= wtOB)
+
+// =========================================================================
+// 6. PLOT
+// =========================================================================
+// WaveTrend: plot utama karena range-nya paling informatif.
+plot(wt1, title="WT1 (fast)", color=color.new(color.blue,  0), linewidth=2)
+plot(wt2, title="WT2 (slow)", color=color.new(color.red,   0), linewidth=2)
+
+// RSI & ADX di scale yang sama (0-100), jadi bisa di-plot di pane yang
+// sama dengan WT1/WT2 yang juga berada di kira-kira range ±100.
+plot(rsiVal, title="RSI (Wilder)", color=isTrending ? color.new(color.teal, 0) : color.new(color.gray, 0), linewidth=1)
+plot(adxVal, title="ADX",          color=color.new(color.orange, 30), linewidth=1, style=plot.style_stepline)
+
+// Reference lines
+hline( 100.0, "RSI Top",  color=color.new(color.gray,  80), hline.style_dotted)
+hline( rsiOB, "RSI OB",   color=color.new(color.red,   40), hline.style_dashed)
+hline(  50.0, "Mid",      color=color.new(color.gray,  70), hline.style_dotted)
+hline( rsiOS, "RSI OS",   color=color.new(color.green, 40), hline.style_dashed)
+hline(   0.0, "Zero",     color=color.new(color.gray,  70), hline.style_dotted)
+hline(  -50.0, "",         color=color.new(color.gray,  90), hline.style_dotted)
+hline( -100.0, "Bottom",  color=color.new(color.gray,  80), hline.style_dotted)
+hline( wtOB,  "WT OB",    color=color.new(color.red,   60), hline.style_dashed)
+hline( wtOS,  "WT OS",    color=color.new(color.green, 60), hline.style_dashed)
+hline(adxThresh, "ADX Threshold", color=color.new(color.orange, 50), hline.style_dashed)
+
+// =========================================================================
+// 7. BACKGROUND TINT
+// =========================================================================
+// Regime: biru = trending, abu = ranging.
+regimeBg = isTrending ? color.new(color.blue, 95) : color.new(color.gray, 95)
+// WT zone: hijau = oversold, merah = overbought (overlay precedence: regime tint dim, zone tint lebih kuat).
+wtZoneBg = wt1 >= wtOB ? color.new(color.red,   92) :
+           wt1 <= wtOS ? color.new(color.green, 92) : na
+bgcolor(wtZoneBg != na ? wtZoneBg : regimeBg, title="Regime/Zone Background")
+
+// =========================================================================
+// 8. SIGNAL MARKERS
+// =========================================================================
+plotshape(wtLong   and not wtLong[1],   title="WT Long",   text="WT▲",  style=shape.triangleup,   location=location.bottom, color=color.new(color.green, 0), textcolor=color.new(color.green, 0), size=size.tiny)
+plotshape(wtShort  and not wtShort[1],  title="WT Short",  text="WT▼",  style=shape.triangledown, location=location.top,    color=color.new(color.red,   0), textcolor=color.new(color.red,   0), size=size.tiny)
+plotshape(rsiLong  and not rsiLong[1],  title="RSI Long",  text="R▲",   style=shape.triangleup,   location=location.bottom, color=color.new(color.teal,  0), textcolor=color.new(color.teal,  0), size=size.tiny, offset=0)
+plotshape(rsiShort and not rsiShort[1], title="RSI Short", text="R▼",   style=shape.triangledown, location=location.top,    color=color.new(color.orange,0), textcolor=color.new(color.orange,0), size=size.tiny, offset=0)
+
+// =========================================================================
+// 9. INFO TABLE (top-right of pane)
+// =========================================================================
+var table infoTable = table.new(position.top_right, 2, 5, frame_color=color.new(color.gray, 30), frame_width=1, border_width=1)
+if barstate.islast
+    table.cell(infoTable, 0, 0, "RX-0 Momentum",        text_color=color.white, bgcolor=color.new(color.blue, 20), text_size=size.small)
+    table.cell(infoTable, 1, 0, "",                       bgcolor=color.new(color.blue, 20))
+    table.cell(infoTable, 0, 1, "Regime",                text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(infoTable, 1, 1, isTrending ? "Trending" : "Ranging", text_color=color.white, bgcolor=isTrending ? color.new(color.blue, 30) : color.new(color.gray, 40), text_size=size.small)
+    table.cell(infoTable, 0, 2, "RSI (14)",              text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(infoTable, 1, 2, str.tostring(rsiVal, "#.#"), text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(infoTable, 0, 3, "WT1",                   text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(infoTable, 1, 3, str.tostring(wt1, "#.#"),     text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(infoTable, 0, 4, "ADX",                   text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(infoTable, 1, 4, str.tostring(adxVal, "#.#"),   text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+
+// =========================================================================
+// 10. ALERTS
+// =========================================================================
+alertcondition(regimeFlip,                    title="Regime Change",        message="RX-0 regime flipped on {{ticker}} ({{interval}}) (ADX={{plot_3}})")
+alertcondition(wtLong  and not wtLong[1],     title="WT Oversold Cross",   message="RX-0 WaveTrend LONG cross on {{ticker}} ({{interval}}) wt1={{plot_0}}")
+alertcondition(wtShort and not wtShort[1],    title="WT Overbought Cross", message="RX-0 WaveTrend SHORT cross on {{ticker}} ({{interval}}) wt1={{plot_0}}")
+alertcondition(rsiLong  and not rsiLong[1],   title="RSI Long",            message="RX-0 RSI LONG on {{ticker}} ({{interval}}) rsi={{plot_2}}")
+alertcondition(rsiShort and not rsiShort[1],  title="RSI Short",           message="RX-0 RSI SHORT on {{ticker}} ({{interval}}) rsi={{plot_2}}")
