@@ -2,8 +2,9 @@
 
 > **Crypto trading bot bertenaga AI dengan strategi LuxAlgo-grade — dibangun dari nol untuk profit konsisten.**
 
-[![Status](https://img.shields.io/badge/status-Phase%204%20Complete-brightgreen)]()
+[![Status](https://img.shields.io/badge/status-Phase%205%20Complete-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
+[![Tests](https://img.shields.io/badge/tests-90%2B%20passing-brightgreen)]()
 [![License](https://img.shields.io/badge/license-Private-red)]()
 
 ---
@@ -82,8 +83,9 @@ Berdasarkan riset dari [LuxAlgo Library](https://www.luxalgo.com/library/), RX-0
 | **2** | **Core Indicator Engine** | ✅ Done | Luminance + RSI Regime + BOS/CHoCH + WaveTrend (Python port) | 3-4 hari |
 | **3** | **Confluence Scorer** | ✅ Done | 0-4 scoring logic, entry rules, position sizing | 1 hari |
 | **4** | **Telegram Alert System** | ✅ Done | Alert format + cooldown + daemon + top-N ranking | 1-2 hari |
-| 5 | Backtest Engine | ⏳ Pending | Historical replay + 6 metrics + equity curve | 2-3 hari |
-| 6 | Paper Trading | ⏳ Pending | Dry-run 2-4 minggu, real-time win rate tracking | 2-4 minggu |
+| **5** | **Backtest Engine** | ✅ Done | Walk-forward + 6 metrics + equity curve + JSON export | 2-3 hari |
+| **5b** | **TradingView Pine Scripts** | ✅ Done | 2 indikator (.pine) untuk visual chart + alert | bonus |
+| 6 | Paper Trading | ⏳ Next | Dry-run 2-4 minggu, real-time win rate tracking | 2-4 minggu |
 | 7 | Auto-Trade Layer | ⏳ Pending | CCXT live execution + risk guard + kill switch | 3-5 hari |
 
 **Total timeline:** ~3-4 minggu sampai full auto-trade ready.
@@ -199,6 +201,46 @@ python main.py cooldown --clear-all
 > 15 menit per pair (override via `ALERT_COOLDOWN_MINUTES` di .env). Mencegah
 > spam alert untuk pair yang sama.
 
+### 7. Run Backtest (Phase 5 — validasi strategi)
+
+```bash
+# Backtest 90 hari BTC/USDT 1H, modal $10k, risk 2% per trade
+python main.py backtest --symbol BTC/USDT --timeframe 1h --days 90
+
+# Output ke JSON + chart PNG
+python main.py backtest --symbol ETH/USDT --timeframe 4h --days 180 \
+  --output backtest/results/eth_180d.json \
+  --chart backtest/results/eth_equity.png
+
+# Multi-symbol loop (shell)
+for s in BTC/USDT ETH/USDT SOL/USDT; do
+  python main.py backtest --symbol $s --timeframe 1h --days 90
+done
+```
+
+**6 metrics yang diukur** (target per `STRATEGY.md`):
+- Win Rate > 50% · Profit Factor > 1.5 · Max Drawdown < 20%
+- Sharpe Ratio > 1.5 · Avg R-Multiple > 1.5R · Expectancy > 0
+
+Report menampilkan verdict (X/6 metrics lulus target) + equity curve chart.
+
+### 8. TradingView Visualization (Optional)
+
+Visualisasi strategi di chart TradingView — cocok untuk konfirmasi manual.
+
+**File di `tradingview/`:**
+- `rx0-confluence.pine` — overlay (Luminance + Structure + Confluence table)
+- `rx0-momentum.pine` — pane bawah (RSI + WaveTrend + regime background)
+
+**Cara install** (lengkap di `tradingview/INSTALL.md`):
+1. Buka TradingView → buka chart pair apapun (mis. BTCUSDT)
+2. Klik tab **Pine Editor** di bagian bawah
+3. New blank script → paste `rx0-confluence.pine` → Save → **Add to chart**
+4. Ulangi untuk `rx0-momentum.pine` (pilih "lower pane")
+5. Setup alert: klik indicator → **...** → **Add Alert** → pilih condition
+
+> **Catatan:** TradingView Free plan = max 2 indikator/chart. 2 file ini udah optimal untuk limit itu.
+
 ---
 
 ## 📊 Project Structure
@@ -285,6 +327,52 @@ Saat backtest & paper trading jalan, RX-0 Unicorn diukur dengan **6 metrics waji
 - **Paper trading by default** — live mode butuh explicit enable
 - **Kill switch** — emergency stop via Telegram command
 - **Local-only data** — tidak ada data dikirim ke external service (kecuali Telegram alert)
+
+---
+
+## 🧪 Backtest Methodology
+
+**Pendekatan:** walk-forward simulation, no look-ahead.
+
+| Aspek | Implementasi |
+|---|---|
+| **Entry** | Saat confluence score ≥ 3 (A+ atau Valid). Fill price = next candle **open** (bukan close sekarang) |
+| **Exit** | 3 mode: TP1 hit, TP2 hit, SL hit, atau time-stop (max 50 candle) |
+| **Sizing** | 1-2% modal per trade (configurable). A+ dapat 1.5x multiplier |
+| **No look-ahead** | Indikator + signal dihitung di bar `t`, entry/track di `t+1` dst |
+| **Slippage** | Belum dimodelkan (akan ditambah Phase 6 paper trade validation) |
+| **Sample size** | Minimum 30 trade untuk verdict valid. < 30 = warning |
+
+**6 Metrics Wajib + Target:**
+- Win Rate > 50% · Profit Factor > 1.5 · Max Drawdown < 20%
+- Sharpe Ratio > 1.5 · Avg R-Multiple > 1.5R · Expectancy > 0
+
+Detail formula & edge case: lihat `backtest/metrics.py` docstring.
+
+**Interpretasi:**
+- **6/6 PASS** → strategi layak live trade (setelah paper trade validation)
+- **4-5/6** → perlu tuning, jangan live dulu
+- **< 4/6** → strategy tidak viable, rework
+
+---
+
+## 📺 TradingView Visualization
+
+Visualisasi strategi langsung di chart TradingView. Cocok untuk:
+- ✅ Konfirmasi manual sebelum entry
+- ✅ Lihat BOS/CHoCH + Luminance breakout bareng
+- ✅ Setup alert ke webhook → forward ke RX-0 daemon
+
+**File Pine Script di `tradingview/`:**
+
+| File | Tipe | Isi |
+|---|---|---|
+| `rx0-confluence.pine` | Overlay (chart utama) | Luminance range box + breakout arrows + BOS/CHoCH labels + Confluence score table |
+| `rx0-momentum.pine` | Lower pane | RSI Wilder + ADX regime + WaveTrend LazyBear + zone highlight |
+
+**Limitasi:** TradingView Free = max 2 indikator/chart. 2 file ini optimal untuk limit itu.
+
+**Detail lengkap:** baca `tradingview/README.md` + `tradingview/INSTALL.md`.
 
 ---
 
