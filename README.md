@@ -85,7 +85,7 @@ Berdasarkan riset dari [LuxAlgo Library](https://www.luxalgo.com/library/), RX-0
 | **4** | **Telegram Alert System** | ✅ Done | Alert format + cooldown + daemon + top-N ranking | 1-2 hari |
 | **5** | **Backtest Engine** | ✅ Done | Walk-forward + 6 metrics + equity curve + JSON export | 2-3 hari |
 | **5b** | **TradingView Pine Scripts** | ✅ Done | 2 indikator (.pine) untuk visual chart + alert | bonus |
-| 6 | Paper Trading | ⏳ Next | Dry-run 2-4 minggu, real-time win rate tracking | 2-4 minggu |
+| 6 | Paper Trading | ✅ Done | Virtual $10k portfolio, SL/TP polling, 5-tier Telegram, 55 unit tests | 2-4 minggu |
 | 7 | Auto-Trade Layer | ⏳ Pending | CCXT live execution + risk guard + kill switch | 3-5 hari |
 
 **Total timeline:** ~3-4 minggu sampai full auto-trade ready.
@@ -224,7 +224,41 @@ done
 
 Report menampilkan verdict (X/6 metrics lulus target) + equity curve chart.
 
-### 8. TradingView Visualization (Optional)
+### 8. Paper Trading (Phase 6 — dry-run live)
+
+Validate strategi real-time tanpa uang sungguhan. Default mode — semua
+confluence signal otomatis di-mirror ke virtual $10k portfolio.
+
+```bash
+# Initialize (idempotent) — buat paper DB + state awal
+python main.py paper start
+
+# Cek status portfolio, open positions, drawdown
+python main.py paper status
+
+# Generate text + PNG equity report (default 7 hari terakhir)
+python main.py paper report --days 7
+
+# Long-running monitor (poll harga via CCXT, fire SL/TP/time-stop)
+python main.py paper monitor
+```
+
+**5-tier Telegram alerts** (fire otomatis kalau `TELEGRAM_BOT_TOKEN` di-set):
+
+| Tier | Trigger              | Format                                     |
+|------|----------------------|--------------------------------------------|
+| 1    | New entry            | symbol, direction, entry/SL/TP1/TP2, grade |
+| 2    | Exit (any reason)    | P/L $, P/L %, R-multiple                   |
+| 3    | Daily digest         | equity, day P/L, trades, win rate, DD      |
+| 4    | Weekly report        | full metrics + equity chart PNG            |
+| 5    | Risk gate breach     | alert_type + DD%/equity/paused_until       |
+
+**Phase 7 readiness** tercetak di akhir `paper report` —
+🟢 READY = win rate ≥ 40%, profit factor ≥ 1.0, drawdown ≤ 20%,
+total trades ≥ 30. Lihat [`docs/PAPER_TRADING.md`](docs/PAPER_TRADING.md)
+untuk detail lengkap.
+
+### 9. TradingView Visualization (Optional)
 
 Visualisasi strategi di chart TradingView — cocok untuk konfirmasi manual.
 
@@ -269,9 +303,15 @@ luxalgo-trader/
 │   ├── telegram.py                  # TelegramBot (httpx-based)
 │   ├── formatter.py                 # format_signal() — alert text template
 │   └── cooldown.py                  # CooldownManager (SQLite-backed)
-├── backtest/                       # Phase 5
+├── backtest/                       # Phase 5 ✅
 │   ├── engine.py
 │   └── metrics.py
+├── paper/                          # Phase 6 ✅
+│   ├── journal.py                  # SQLite: paper_trades / paper_daily / paper_state
+│   ├── portfolio.py                # virtual balance, sizing, drawdown, circuit breaker
+│   ├── trader.py                   # open_from_signal / check_one_position / monitor_loop
+│   ├── reporter.py                 # text + chart report, phase7_readiness
+│   └── notifier.py                 # 5-tier Telegram (entry/exit/daily/weekly/risk)
 ├── execution/                      # Phase 7
 │   ├── trader.py
 │   └── risk_manager.py
@@ -340,7 +380,7 @@ Saat backtest & paper trading jalan, RX-0 Unicorn diukur dengan **6 metrics waji
 | **Exit** | 3 mode: TP1 hit, TP2 hit, SL hit, atau time-stop (max 50 candle) |
 | **Sizing** | 1-2% modal per trade (configurable). A+ dapat 1.5x multiplier |
 | **No look-ahead** | Indikator + signal dihitung di bar `t`, entry/track di `t+1` dst |
-| **Slippage** | Belum dimodelkan (akan ditambah Phase 6 paper trade validation) |
+- **Slippage** | Dimodelkan konservatif lewat pessimistic SL/TP ordering di Phase 5 + divalidasi lagi di Phase 6 paper trading |
 | **Sample size** | Minimum 30 trade untuk verdict valid. < 30 = warning |
 
 **6 Metrics Wajib + Target:**
@@ -421,7 +461,10 @@ Visualisasi strategi langsung di chart TradingView. Cocok untuk:
 - [x] Unit tests (35 tests: cooldown logic, formatter edge cases, httpx mock)
 - [ ] (Coming) Daily digest
 
-### Phase 5-7 (Planned)
+### Phase 5-6 (Done)
+- [x] **Phase 5** — Backtest engine: walk-forward, 6 metrics, equity curve, JSON export
+- [x] **Phase 6** — Paper trading: virtual portfolio + SL/TP polling + 5-tier Telegram notifier + Phase 7 readiness check (55 unit tests)
+- [ ] **Phase 7** — Auto-trade layer (CCXT live execution + risk guard + kill switch)
 - Backtest engine, paper trading, auto-trade
 
 ---

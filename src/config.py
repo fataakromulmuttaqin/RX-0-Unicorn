@@ -18,6 +18,10 @@ SRC_DIR: Path = PROJECT_ROOT / "src"
 
 # --- Database ---
 DB_PATH: Path = STORAGE_DIR / "candles.db"
+# Paper-trades DB (Phase 6) — disimpan terpisah dari candle DB supaya data
+# paper trading tidak tercampur dengan candle historis. Schema didefinisikan
+# di paper/journal.py (paper_trades + paper_daily).
+PAPER_DB_PATH: Path = STORAGE_DIR / "paper_trades.db"
 
 # --- Watchlist ---
 WATCHLIST_PATH: Path = PAIRS_DIR / "watchlist.json"
@@ -118,8 +122,68 @@ TARGET_MAX_DRAWDOWN: float = 0.20  # < 20%
 TARGET_SHARPE: float = 1.5  # > 1.5
 TARGET_AVG_R_MULTIPLE: float = 1.5  # > 1.5R
 
+# --- Paper Trading System (Phase 6) ---
+# Flag mode paper trading. Default True (ON) — Phase 7 live trading akan
+# override ke False. Override via env PAPER_MODE=false kalau perlu.
+PAPER_MODE: bool = os.getenv("PAPER_MODE", "true").lower() == "true"
+# Modal awal paper portfolio (USD). Dipakai oleh PaperPortfolio.start().
+PAPER_INITIAL_BALANCE: float = 10_000.0
+# Risk per trade (fraksi equity) — dipakai untuk position sizing.
+# Default 2% sama dengan backtest default untuk apples-to-apples compare.
+PAPER_RISK_PER_TRADE: float = 0.02
+# Batas posisi terbuka simultan (max 3 pairs aktif bersamaan).
+PAPER_MAX_OPEN_POSITIONS: int = 3
+# Batas entry baru per hari (untuk mencegah over-trading).
+PAPER_MAX_DAILY_TRADES: int = 3
+# Daily loss limit (fraksi equity) — kalau tercapai, stop trading untuk hari itu.
+# 5% dari balance awal = $500 di $10k.
+PAPER_DAILY_LOSS_LIMIT: float = 0.05
+# Maximum drawdown circuit breaker (fraksi dari peak equity).
+# Kalau drawdown > 15%, pause trading selama 24 jam.
+PAPER_MAX_DRAWDOWN_CIRCUIT: float = 0.15
+# Move SL ke entry (breakeven) ketika TP1 hit. Standar money management
+# untuk "lock in" trade yang sudah untung.
+PAPER_TP1_HIT_BREAKEVEN: bool = True
+# Berapa kali lipat (risk) untuk TP1 (1.0R) dan TP2 (2.0R default).
+# Position ditutup 50% di TP1, sisa 50% di TP2.
+PAPER_TP1_RR_RATIO: float = 1.0
+PAPER_TP2_RR_RATIO: float = 2.0
+PAPER_TP1_CLOSE_PCT: float = 0.50  # fraction closed at TP1
+# Monitor loop interval (detik) untuk cek SL/TP.
+PAPER_MONITOR_INTERVAL_SECONDS: int = int(os.getenv("PAPER_MONITOR_INTERVAL_SECONDS", "60"))
+# Time-stop untuk monitor: berapa bar maksimum hold sebelum force-close.
+# Default 50 (sama dengan backtest default untuk apples-to-apples compare).
+PAPER_MAX_BARS_HOLD: int = int(os.getenv("PAPER_MAX_BARS_HOLD", "50"))
+# Time-stop window dalam detik (default 4 jam = 1 cycle untuk 1h timeframe).
+# Monitor akan force-close trade yang lebih lama dari ini.
+PAPER_TIME_STOP_SECONDS: int = int(os.getenv("PAPER_TIME_STOP_SECONDS", "14400"))
+# Default lookback days untuk paper report.
+PAPER_REPORT_DEFAULT_DAYS: int = int(os.getenv("PAPER_REPORT_DEFAULT_DAYS", "7"))
+# Path directory untuk chart output.
+PAPER_REPORTS_DIR: Path = PROJECT_ROOT / "paper" / "reports"
+
+# --- Pass/fail criteria for greenlighting Phase 7 (live trading) ---
+# Threshold ini yang dipakai paper/reporter.py untuk menilai apakah
+# real-time paper performance "cocok" dengan backtest. Definisi:
+#   - paper_win_rate >= backtest_win_rate - 0.10  (toleransi 10% lebih buruk)
+#   - paper_profit_factor >= 1.0  (tidak rugi bersih)
+#   - paper_max_drawdown <= BACKTEST target (0.20)
+PAPER_PHASE7_WIN_RATE_TOLERANCE: float = 0.10
+PAPER_PHASE7_MIN_PROFIT_FACTOR: float = 1.0
+PAPER_PHASE7_MAX_DRAWDOWN: float = TARGET_MAX_DRAWDOWN
+# Minimum closed trades untuk statistical significance.
+PAPER_PHASE7_MIN_TRADES: int = 30
+
 
 def ensure_dirs() -> None:
     """Pastikan semua direktori yang dibutuhkan sudah ada."""
-    for d in (DATA_DIR, STORAGE_DIR, FETCHERS_DIR, PAIRS_DIR, LOGS_DIR, BACKTEST_OUTPUT_DIR):
+    for d in (
+        DATA_DIR,
+        STORAGE_DIR,
+        FETCHERS_DIR,
+        PAIRS_DIR,
+        LOGS_DIR,
+        BACKTEST_OUTPUT_DIR,
+        PAPER_REPORTS_DIR,
+    ):
         d.mkdir(parents=True, exist_ok=True)

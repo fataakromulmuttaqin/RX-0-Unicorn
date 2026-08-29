@@ -35,6 +35,14 @@ from backtest.data_loader import ensure_data
 from backtest.engine import run_backtest
 from backtest.metrics import calculate_metrics
 from backtest.report import format_report, to_equity_curve_chart, to_json
+from paper import (
+    PaperJournal,
+    PaperNotifier,
+    PaperTrader,
+    build_weekly_summary,
+    generate_equity_chart,
+    generate_report as generate_paper_report,
+)
 from src.config import (
     ALERT_COOLDOWN_MINUTES,
     ALERT_TOP_N,
@@ -47,6 +55,9 @@ from src.config import (
     CONFLUENCE_MIN_VALID,
     DEFAULT_LIMIT,
     DEFAULT_TIMEFRAME,
+    PAPER_INITIAL_BALANCE,
+    PAPER_MONITOR_INTERVAL_SECONDS,
+    PAPER_REPORT_DEFAULT_DAYS,
     SCAN_INTERVAL_SECONDS,
     VALID_TIMEFRAMES,
     WATCHLIST_PATH,
@@ -640,6 +651,404 @@ def cmd_daemon(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- Subcommand handlers (Phase 6: Paper Trading) -------------------------
+def _format_paper_status(state: dict, stats: dict, open_positions: list,
+                         metrics: dict) -> str:
+    """Format paper trading status jadi string rapi."""
+    balance = state["balance"]
+    initial = state["initial_balance"]
+    peak = state["peak_equity"]
+    equity = balance + sum(
+        PaperPortfolio_compute_unrealized_helper(p) for p in open_positions
+    ) if open_positions else balance
+    cum_pnl = equity - initial
+    cum_pct = (cum_pnl / initial * 100) if initial > 0 else 0
+    drawdown = ((peak - equity) / peak * 100) if peak > 0 else 0
+    lines = [
+        "=" * 60,
+        "RX-0 Unicorn — Paper Trading Status",
+        "=" * 60,
+        f"DB path          : {stats.get('db_path')}",
+        f"DB size          : {stats.get('size_bytes', 0):,} bytes",
+        "-" * 60,
+        f"Initial balance  : ${initial:>13,.2f}",
+        f"Cash balance     : ${balance:>13,.2f}",
+        f"Equity (mark)    : ${equity:>13,.2f}",
+        f"Peak equity      : ${peak:>13,.2f}",
+        f"Cumulative P/L   : ${cum_pnl:>+13,.2f}  ({cum_pct:+.2f}%)",
+        f"Current drawdown : {drawdown:>12.2f}%",
+        "-" * 60,
+        f"Total trades     : {stats.get('total_trades', 0):>5}",
+        f"Open positions   : {stats.get('open_trades', 0):>5}",
+        f"Closed trades    : {stats.get('closed_trades', 0):>5}",
+        f"Win rate (all)   : {metrics.get('win_rate', 0) * 100:>12.2f}%",
+        f"Total P/L (all)  : ${metrics.get('total_pnl', 0):>+12,.2f}",
+        "-" * 60,
+    ]
+    if open_positions:
+        lines.append("OPEN POSITIONS:")
+        lines.append(
+            f"  {'Symbol':<12}{'Dir':<6}{'Entry':>11}{'SL':>11}{'TP2':>11}"
+            f"{'Risk$':>10}{'Score':>6}"
+        )
+        for p in open_positions:
+            lines.append(
+                f"  {p['symbol']:<12}{p['direction']:<6}"
+                f"{float(p['entry_price']):>11.4f}"
+                f"{float(p['sl']):>11.4f}"
+                f"{float(p['tp2']):>11.4f}"
+                f"${float(p['risk_usd']):>9.2f}"
+                f"{int(p['confluence_score']):>5}/4"
+            )
+    else:
+        lines.append("OPEN POSITIONS: (none)")
+    lines.append("=" * 60)
+    return "\n".join(lines)
+
+
+def PaperPortfolio_compute_unrealized_helper(p: dict) -> float:
+    """Helper used by status formatter to compute unrealized PnL
+    using entry price as fallback (no live data)."""
+    try:
+        if p["direction"] == "long":
+            return 0.0  # no current price -> 0 unrealized
+        return 0.0
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+
+def cmd_paper_start(args: argparse.Namespace) -> int:
+    """Initialize paper portfolio."""
+    from paper import PaperPortfolio
+
+    with PaperJournal() as j:
+        portfolio = PaperPortfolio(journal=j)
+        balance = args.balance if args.balance is not None else PAPER_INITIAL_BALANCE
+        if args.reset:
+            portfolio.reset(initial_balance=balance)
+        else:
+            state = portfolio.start(initial_balance=balance)
+            balance = state["balance"]
+        stats = j.get_stats()
+        metrics = j.aggregate_performance(days_back=None)
+        state = portfolio.get_state()
+        print(_format_paper_status(state, stats, [], metrics))
+    return 0
+
+
+def cmd_paper_status(_args: argparse.Namespace) -> int:
+    """Tampilkan balance, open positions, dan ringkasan P/L."""
+    from paper import PaperPortfolio
+
+    with PaperJournal() as j:
+        portfolio = PaperPortfolio(journal=j)
+        state = portfolio.get_state()
+        stats = j.get_stats()
+        open_pos = j.get_open_positions()
+        metrics = j.aggregate_performance(days_back=None)
+        print(_format_paper_status(state, stats, open_pos, metrics))
+    return 0
+
+
+def cmd_paper_scan_and_trade(args: argparse.Namespace) -> int:
+    """Jalankan confluence scan, auto-open paper positions untuk A+/Valid."""
+    watchlist = load_watchlist()
+    symbols = resolve_symbols(watchlist, args.tier)
+    if not symbols:
+        logger.error("Watchlist kosong")
+        return 1
+
+    bot = TelegramBot()
+    notifier = PaperNotifier(bot=bot)
+    with PaperJournal() as j:
+        trader = PaperTrader(journal=j, notifier=notifier)
+        trader.portfolio.start()
+        opened = 0
+        with CandleDB() as db:
+            for sym in symbols:
+                res = _scan_symbol(db, sym, args.timeframe)
+                if res is None:
+                    continue
+                if not res.get("direction") or res.get("direction") == "None":
+                    continue
+                if res["score"] < args.min_score:
+                    continue
+                if res["grade"] not in (GRADE_A_PLUS, GRADE_VALID):
+                    continue
+                trade = trader.open_from_signal(
+                    res, symbol=sym, signal_source="scanner"
+                )
+                if trade is not None:
+                    opened += 1
+        bot.close()
+        logger.success(
+            f"Paper scan-and-trade done: opened={opened} from "
+            f"{len(symbols)} symbols (tf={args.timeframe})"
+        )
+    return 0
+
+
+def _make_paper_price_fetcher() -> "callable":
+    """Build a price_fetcher from CCXT Binance."""
+    try:
+        fetcher = CryptoFetcher(exchange_id="binance")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[paper] cannot init fetcher: {exc}")
+        return lambda _sym: None
+
+    def _fetch(symbol: str):
+        try:
+            t = fetcher.exchange.fetch_ticker(symbol)
+            return float(t.get("last") or 0) or None
+        except Exception:  # noqa: BLE001
+            return None
+    return _fetch
+
+
+def cmd_paper_monitor(args: argparse.Namespace) -> int:
+    """Daemon: poll open positions dan close SL/TP hits."""
+    bot = TelegramBot() if not args.no_telegram else None
+    notifier = PaperNotifier(bot=bot) if bot is not None else None
+    price_fetcher = _make_paper_price_fetcher()
+    with PaperJournal() as j:
+        trader = PaperTrader(journal=j, notifier=notifier)
+        # daily-digest trigger: 00:05 UTC
+        last_digest_key = "last_daily_digest_ts"
+        last_digest_ts = j.get_state(last_digest_key, 0) or 0
+        now_ts = int(time.time())
+        today_str = time.strftime("%Y-%m-%d", time.gmtime(now_ts))
+        last_digest_day = (
+            time.strftime("%Y-%m-%d", time.gmtime(int(last_digest_ts)))
+            if int(last_digest_ts) > 0 else ""
+        )
+        if last_digest_day != today_str and time.gmtime().tm_hour >= 0:
+            # fire at first monitor cycle each day
+            logger.info("[paper] sending daily digest (auto)")
+            try:
+                state = trader.portfolio.get_state()
+                equity = trader.portfolio.get_equity()
+                digest_state = {
+                    "balance": state["balance"],
+                    "equity": equity,
+                    "initial_balance": state["initial_balance"],
+                    "daily_pnl": j.daily_pnl_today(),
+                    "trades_today": j.count_trades_today(),
+                    "wins": 0,
+                    "losses": 0,
+                    "win_rate": 0,
+                    "drawdown_pct": trader.portfolio.get_drawdown_pct(equity),
+                    "open_count": j.count_open_positions(),
+                }
+                if notifier is not None:
+                    notifier.notify_daily_digest(digest_state)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"[paper] daily digest error: {exc}")
+            j.set_state(last_digest_key, now_ts)
+        # weekly report trigger: Sun 23:59 UTC
+        last_weekly_ts = j.get_state("last_weekly_report_ts", 0) or 0
+        gm = time.gmtime()
+        last_weekly_day = (
+            time.strftime("%Y-%m-%d", time.gmtime(int(last_weekly_ts)))
+            if int(last_weekly_ts) > 0 else ""
+        )
+        if (
+            gm.tm_wday == 6  # Sunday
+            and last_weekly_day != time.strftime("%Y-%m-%d", gm)
+        ):
+            logger.info("[paper] sending weekly report (auto)")
+            try:
+                cmd_paper_weekly_report_inner(j, notifier)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"[paper] weekly report error: {exc}")
+            j.set_state("last_weekly_report_ts", now_ts)
+        # run monitor loop
+        cycles = trader.monitor_loop(
+            price_fetcher=price_fetcher,
+            interval_seconds=args.interval,
+            once=args.once,
+        )
+        logger.info(f"[paper] monitor finished after {cycles} cycle(s)")
+    if bot is not None:
+        bot.close()
+    return 0
+
+
+def cmd_paper_close(args: argparse.Namespace) -> int:
+    """Manual close satu paper position."""
+    with PaperJournal() as j:
+        trader = PaperTrader(journal=j)
+        trade = j.get_trade_by_id(args.trade_id)
+        if trade is None:
+            logger.error(f"trade_id '{args.trade_id}' not found")
+            return 1
+        if trade["status"] != "open":
+            logger.error(
+                f"trade '{args.trade_id}' is {trade['status']}, not open"
+            )
+            return 1
+        exit_price = (
+            args.price if args.price is not None
+            else float(trade["entry_price"])
+        )
+        closed = trader.close_trade(args.trade_id, exit_price, args.reason)
+        if closed is None:
+            return 1
+        print(
+            f"Closed {args.trade_id} @ ${exit_price:.4f} "
+            f"reason={args.reason} pnl=${float(closed.get('pnl_usd', 0)):+.2f}"
+        )
+    return 0
+
+
+def cmd_paper_close_all(_args: argparse.Namespace) -> int:
+    """EMERGENCY close semua open paper positions."""
+    with PaperJournal() as j:
+        trader = PaperTrader(journal=j)
+        count = trader.close_all()
+        logger.warning(f"EMERGENCY closed {count} paper position(s)")
+    return 0
+
+
+def cmd_paper_report(args: argparse.Namespace) -> int:
+    """Generate performance report (text + optional chart)."""
+    days = int(args.days) if args.days and args.days > 0 else PAPER_REPORT_DEFAULT_DAYS
+    with PaperJournal() as j:
+        text = generate_paper_report(j, days_back=days)
+        print(text)
+        if args.chart:
+            chart_path = generate_equity_chart(j, days_back=days)
+            if chart_path:
+                logger.info(f"Equity chart: {chart_path}")
+            else:
+                logger.info("No chart generated (no data or matplotlib missing)")
+    return 0
+
+
+def cmd_paper_journal(args: argparse.Namespace) -> int:
+    """Tampilkan recent paper trades."""
+    limit = max(1, int(args.limit))
+    with PaperJournal() as j:
+        trades = j.get_all_trades(limit=limit)
+        if not trades:
+            print("(no paper trades yet)")
+            return 0
+        print("=" * 90)
+        print(f"RX-0 Unicorn — Paper Journal (last {limit} trades)")
+        print("=" * 90)
+        print(
+            f"{'Trade ID':<32}{'Symbol':<10}{'Dir':<5}{'Status':<8}"
+            f"{'Entry':>10}{'Exit':>10}{'P/L$':>10}{'R':>7}{'Reason':<10}"
+        )
+        print("-" * 90)
+        for t in trades:
+            tid = str(t.get("trade_id", ""))[:30]
+            sym = str(t.get("symbol", ""))[:9]
+            direction = str(t.get("direction", ""))[:4]
+            status = str(t.get("status", ""))[:7]
+            entry = float(t.get("entry_price") or 0)
+            exit_p = float(t.get("exit_price") or 0)
+            pnl = float(t.get("pnl_usd") or 0)
+            r = float(t.get("pnl_r_multiple") or 0)
+            reason = str(t.get("exit_reason") or "-")[:9]
+            print(
+                f"{tid:<32}{sym:<10}{direction:<5}{status:<8}"
+                f"{entry:>10.4f}{exit_p:>10.4f}${pnl:>+9.2f}{r:>+6.2f}"
+                f"{reason:<10}"
+            )
+        print("=" * 90)
+    return 0
+
+
+def cmd_paper_daily_digest(_args: argparse.Namespace) -> int:
+    """Kirim daily digest ke Telegram."""
+    bot = TelegramBot()
+    notifier = PaperNotifier(bot=bot)
+    try:
+        with PaperJournal() as j:
+            from paper import PaperPortfolio
+            portfolio = PaperPortfolio(journal=j, notifier=notifier)
+            state = portfolio.get_state()
+            equity = portfolio.get_equity()
+            today = time.strftime("%Y-%m-%d", time.gmtime())
+            # gather metrics for today
+            daily_pnl = j.daily_pnl_today()
+            cnt = j.count_trades_today()
+            wins = 0
+            losses = 0
+            wr = 0.0
+            cutoff = int(
+                __import__("datetime").datetime.strptime(today, "%Y-%m-%d")
+                .replace(tzinfo=__import__("datetime").timezone.utc)
+                .timestamp()
+            )
+            rows = j.conn.execute(
+                "SELECT pnl_usd FROM paper_trades WHERE status='closed' "
+                "AND exit_time >= ?",
+                (cutoff,),
+            ).fetchall()
+            for r in rows:
+                p = float(r["pnl_usd"] or 0)
+                if p > 0:
+                    wins += 1
+                elif p < 0:
+                    losses += 1
+            total = wins + losses
+            wr = (wins / total) if total > 0 else 0.0
+            digest_state = {
+                "balance": state["balance"],
+                "equity": equity,
+                "initial_balance": state["initial_balance"],
+                "daily_pnl": daily_pnl,
+                "trades_today": cnt,
+                "wins": wins,
+                "losses": losses,
+                "win_rate": wr,
+                "drawdown_pct": portfolio.get_drawdown_pct(equity),
+                "open_count": j.count_open_positions(),
+            }
+            ok = notifier.notify_daily_digest(digest_state, date_str=today)
+            if ok:
+                logger.success(f"Daily digest sent for {today}")
+            else:
+                logger.info("Daily digest not sent (Telegram degraded)")
+    finally:
+        bot.close()
+    return 0
+
+
+def cmd_paper_weekly_report(_args: argparse.Namespace) -> int:
+    """Kirim weekly report ke Telegram."""
+    bot = TelegramBot()
+    notifier = PaperNotifier(bot=bot)
+    try:
+        with PaperJournal() as j:
+            cmd_paper_weekly_report_inner(j, notifier)
+    finally:
+        bot.close()
+    return 0
+
+
+def cmd_paper_weekly_report_inner(
+    j: PaperJournal, notifier: PaperNotifier | None
+) -> None:
+    """Inner helper: build weekly summary, render chart, notify."""
+    summary = build_weekly_summary(j, days_back=7)
+    chart_path = None
+    try:
+        chart_path = generate_equity_chart(j, days_back=7)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[paper] weekly chart error: {exc}")
+    if notifier is not None:
+        ok = notifier.notify_weekly_report(summary, chart_path=chart_path)
+        if ok:
+            logger.success("Weekly report sent")
+        else:
+            logger.info("Weekly report not sent (Telegram degraded)")
+    # Also print to console
+    text = generate_paper_report(j, days_back=7)
+    print(text)
+
+
 # --- Argparse ---
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -867,6 +1276,184 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     p_bt.set_defaults(func=cmd_backtest)
+
+    # paper (Phase 6)
+    p_paper = sub.add_parser(
+        "paper",
+        help=(
+            "Paper trading (Phase 6) — simulated portfolio, journal, "
+            "monitor daemon, dan reporting. NO real money. "
+            "Tujuan: validasi strategi confluence real-time sebelum Phase 7."
+        ),
+    )
+    paper_sub = p_paper.add_subparsers(dest="paper_command", required=True)
+
+    # paper start
+    p_paper_start = paper_sub.add_parser(
+        "start",
+        help=(
+            "Initialize paper portfolio dengan balance awal. "
+            "Idempotent: aman dipanggil berulang kali."
+        ),
+    )
+    p_paper_start.add_argument(
+        "--reset",
+        action="store_true",
+        help="Hapus semua paper trade + state lalu init ulang (DANGEROUS).",
+    )
+    p_paper_start.add_argument(
+        "--balance",
+        type=float,
+        default=None,
+        help=f"Modal awal USD (default: {PAPER_INITIAL_BALANCE:,.0f}).",
+    )
+    p_paper_start.set_defaults(func=cmd_paper_start)
+
+    # paper status
+    paper_sub.add_parser(
+        "status",
+        help="Tampilkan balance, open positions, dan ringkasan P/L.",
+    ).set_defaults(func=cmd_paper_status)
+
+    # paper scan-and-trade
+    p_paper_scan = paper_sub.add_parser(
+        "scan-and-trade",
+        help=(
+            "Jalankan confluence scan + auto-open paper position untuk "
+            "sinyal A+/Valid (respects risk limits)."
+        ),
+    )
+    p_paper_scan.add_argument(
+        "--timeframe",
+        "-t",
+        choices=VALID_TIMEFRAMES,
+        default=DEFAULT_TIMEFRAME,
+        help=f"Timeframe candle (default: {DEFAULT_TIMEFRAME}).",
+    )
+    p_paper_scan.add_argument(
+        "--tier",
+        choices=WATCHLIST_TIERS,
+        default=None,
+        help="Filter ke satu tier watchlist (default: semua).",
+    )
+    p_paper_scan.add_argument(
+        "--min-score",
+        type=int,
+        default=CONFLUENCE_MIN_VALID,
+        choices=[0, 1, 2, 3, 4],
+        help=f"Minimum confluence score untuk entry (default: {CONFLUENCE_MIN_VALID}).",
+    )
+    p_paper_scan.set_defaults(func=cmd_paper_scan_and_trade)
+
+    # paper monitor
+    p_paper_mon = paper_sub.add_parser(
+        "monitor",
+        help=(
+            "Daemon: setiap --interval detik, cek SL/TP semua open "
+            "positions. Close otomatis kalau hit. Ctrl+C untuk stop."
+        ),
+    )
+    p_paper_mon.add_argument(
+        "--interval",
+        "-i",
+        type=int,
+        default=PAPER_MONITOR_INTERVAL_SECONDS,
+        help=(
+            f"Interval polling (detik, default: "
+            f"{PAPER_MONITOR_INTERVAL_SECONDS})."
+        ),
+    )
+    p_paper_mon.add_argument(
+        "--once",
+        action="store_true",
+        help="Jalankan 1 cycle saja lalu exit (untuk testing).",
+    )
+    p_paper_mon.add_argument(
+        "--no-telegram",
+        action="store_true",
+        help="Disable Telegram notifications (default: enabled jika bot configured).",
+    )
+    p_paper_mon.set_defaults(func=cmd_paper_monitor)
+
+    # paper close <trade_id>
+    p_paper_close = paper_sub.add_parser(
+        "close",
+        help="Manual close satu paper position (id dari 'paper journal').",
+    )
+    p_paper_close.add_argument(
+        "trade_id",
+        help="Trade ID yang akan di-close (lihat 'paper journal').",
+    )
+    p_paper_close.add_argument(
+        "--price",
+        type=float,
+        default=None,
+        help="Exit price. Default: entry price (PnL=0, used for emergency close).",
+    )
+    p_paper_close.add_argument(
+        "--reason",
+        default="manual",
+        help="Exit reason (default: manual).",
+    )
+    p_paper_close.set_defaults(func=cmd_paper_close)
+
+    # paper close-all
+    paper_sub.add_parser(
+        "close-all",
+        help="EMERGENCY close semua open paper positions.",
+    ).set_defaults(func=cmd_paper_close_all)
+
+    # paper report
+    p_paper_report = paper_sub.add_parser(
+        "report",
+        help="Generate performance report (text + optional equity chart).",
+    )
+    p_paper_report.add_argument(
+        "--days",
+        "-d",
+        type=int,
+        default=PAPER_REPORT_DEFAULT_DAYS,
+        help=f"Lookback days (default: {PAPER_REPORT_DEFAULT_DAYS}).",
+    )
+    p_paper_report.add_argument(
+        "--chart",
+        action="store_true",
+        help="Render equity curve PNG (paper/reports/equity_<ts>.png).",
+    )
+    p_paper_report.set_defaults(func=cmd_paper_report)
+
+    # paper journal
+    p_paper_journal = paper_sub.add_parser(
+        "journal",
+        help="Tampilkan recent paper trades (default: 20 terakhir).",
+    )
+    p_paper_journal.add_argument(
+        "--limit",
+        "-n",
+        type=int,
+        default=20,
+        help="Jumlah trade yang ditampilkan (default: 20).",
+    )
+    p_paper_journal.set_defaults(func=cmd_paper_journal)
+
+    # paper daily-digest
+    paper_sub.add_parser(
+        "daily-digest",
+        help=(
+            "Kirim daily digest ke Telegram sekarang (Tier 3). "
+            "Biasanya dipanggil via cron di 00:05 UTC."
+        ),
+    ).set_defaults(func=cmd_paper_daily_digest)
+
+    # paper weekly-report
+    paper_sub.add_parser(
+        "weekly-report",
+        help=(
+            "Kirim weekly report ke Telegram sekarang (Tier 4, "
+            "include equity chart kalau ada data). Biasanya dipanggil "
+            "via cron di Sunday 23:59 UTC."
+        ),
+    ).set_defaults(func=cmd_paper_weekly_report)
 
     return parser
 

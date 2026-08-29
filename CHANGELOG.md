@@ -140,13 +140,55 @@ Format: [Semantic Versioning](https://semver.org/)
 
 ---
 
-## [0.6.0] — Planned
+## [0.6.0] — 2026-08-29
 
-### Phase 6: Paper Trading
-- Dry-run mode (no real money)
-- Real-time signal tracking
-- Win rate validation
-- 2-4 weeks observation period
+### Phase 6: Paper Trading ✅
+
+**Module: `paper/`** — simulates real-time trading with no real money.
+Validates the confluence strategy in real time before greenlighting
+Phase 7 (live trading).
+
+#### Added
+- ✅ `paper/journal.py` — SQLite persistence (`paper_trades`,
+  `paper_daily`, `paper_state`) with WAL + daily aggregation
+- ✅ `paper/portfolio.py` — virtual $10k balance, position-sizing
+  math, drawdown tracking, 4 risk gates (drawdown circuit, daily
+  loss limit, max open positions, max daily trades)
+- ✅ `paper/trader.py` — high-level orchestrator
+  (`open_from_signal`, `check_one_position`, `monitor_loop`,
+  `ccxt_price_fetcher`)
+- ✅ `paper/reporter.py` — text + PNG equity-curve report, weekly
+  summary, `phase7_readiness()` greenlight check
+- ✅ `paper/notifier.py` — **5-tier Telegram notification system**
+  (entry / exit / daily / weekly / risk) with graceful degradation
+  when `TELEGRAM_BOT_TOKEN` is empty
+- ✅ `main.py paper` CLI: 10 subcommands
+  (`start`, `status`, `scan-and-trade`, `monitor`, `close`,
+  `close-all`, `report`, `journal`, `daily-digest`, `weekly-report`)
+- ✅ `src/config.py` — 22 new `PAPER_*` constants (initial balance,
+  risk per trade, drawdown circuit, TP1/TP2 ratios, time-stop,
+  Phase 7 thresholds, reports dir)
+- ✅ `docs/PAPER_TRADING.md` — full architecture + lifecycle +
+  schema + sizing math documentation
+- ✅ `tests/test_paper.py` — **55 unit tests** (journal, portfolio,
+  trader, reporter, notifier; tmp_path isolated DB; MagicMock
+  TelegramBot)
+
+#### Config (new in `src/config.py`)
+- `PAPER_INITIAL_BALANCE = 10_000`
+- `PAPER_RISK_PER_TRADE = 0.02`
+- `PAPER_MAX_DRAWDOWN_CIRCUIT = 0.15`
+- `PAPER_DAILY_LOSS_LIMIT = 0.05`
+- `PAPER_TP1_RR_RATIO = 1.0` · `PAPER_TP2_RR_RATIO = 2.0`
+- `PAPER_TIME_STOP_SECONDS = 14_400` (4h)
+- `PAPER_PHASE7_MIN_TRADES = 30` (greenlight threshold)
+- See `docs/PAPER_TRADING.md` for the full table.
+
+#### Tests
+```
+$ python -m pytest tests/test_paper.py -v
+============================== 55 passed in 1.00s ==============================
+```
 
 ---
 
