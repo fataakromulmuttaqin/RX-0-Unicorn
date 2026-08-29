@@ -207,17 +207,16 @@ plotshape(lumLongBreak,   title="Luminance Long",  text="Lum▲", style=shape.tr
 plotshape(lumShortBreak,  title="Luminance Short", text="Lum▼", style=shape.triangledown, location=location.abovebar, color=color.new(color.red,   0), textcolor=color.new(color.red,   0), size=size.small)
 
 // 5b. Luminance range box
-//   v6: yloc=yloc.price EXPLICIT (default in v5, but v6 is stricter and
-//   requires it to be specified). Box anchored to rangeHigh/rangeLow
-//   prices — by design, follows the price scale not the candle visually
-//   when scrolling. This is standard Pine behavior.
+//   NOTE: box.new() in Pine v5/v6 does NOT have a `yloc` parameter — boxes
+//   are always anchored to price (top/bottom are price values). Only
+//   label.new() and plot() have yloc. So this box is always price-anchored
+//   by design — that's why it stays at the same price level when you scroll.
 if lumShowBox and isCons and lumConsCount >= 1
     box.new(
          left=bar_index - lumConsCount,
          top=rangeHigh,
          right=bar_index + 20,
          bottom=rangeLow,
-         yloc=yloc.price,
          bgcolor=color.new(color.teal, 90),
          border_color=color.new(color.teal, 40),
          border_width=int(1))
