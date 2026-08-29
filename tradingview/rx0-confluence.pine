@@ -207,21 +207,31 @@ plotshape(lumLongBreak,   title="Luminance Long",  text="Lum▲", style=shape.tr
 plotshape(lumShortBreak,  title="Luminance Short", text="Lum▼", style=shape.triangledown, location=location.abovebar, color=color.new(color.red,   0), textcolor=color.new(color.red,   0), size=size.small)
 
 // 5b. Luminance range box
+//   v6: yloc=yloc.price EXPLICIT (default in v5, but v6 is stricter and
+//   requires it to be specified). Box anchored to rangeHigh/rangeLow
+//   prices — by design, follows the price scale not the candle visually
+//   when scrolling. This is standard Pine behavior.
 if lumShowBox and isCons and lumConsCount >= 1
     box.new(
          left=bar_index - lumConsCount,
          top=rangeHigh,
          right=bar_index + 20,
          bottom=rangeLow,
+         yloc=yloc.price,
          bgcolor=color.new(color.teal, 90),
          border_color=color.new(color.teal, 40),
          border_width=int(1))
 
 // 5c. Swing markers
+//   v6 IMPROVEMENT: use yloc=yloc.abovebar/belowbar so swing markers
+//   follow the candle visually (relative position) instead of being
+//   pinned to absolute price. This is the fix for the "stuck when
+//   scrolling" issue on these markers.
 if showSwings and not na(ph)
     label.new(
          x=bar_index[pivLen],
          y=ph,
+         yloc=yloc.abovebar,
          text="▼",
          style=label.style_label_down,
          color=color.new(color.red,   70),
@@ -231,6 +241,7 @@ if showSwings and not na(pl)
     label.new(
          x=bar_index[pivLen],
          y=pl,
+         yloc=yloc.belowbar,
          text="▲",
          style=label.style_label_up,
          color=color.new(color.green, 70),
@@ -238,10 +249,13 @@ if showSwings and not na(pl)
          size=size.tiny)
 
 // 5d. BOS/CHoCH labels
+//   v6 IMPROVEMENT: use yloc so labels track candle visual position
+//   rather than absolute price. Tooltip still shows the price context.
 if bosBull
     label.new(
          x=bar_index,
          y=low,
+         yloc=yloc.belowbar,
          text="BOS",
          style=label.style_label_up,
          color=color.new(color.blue,   0),
@@ -252,6 +266,7 @@ if bosBear
     label.new(
          x=bar_index,
          y=high,
+         yloc=yloc.abovebar,
          text="BOS",
          style=label.style_label_down,
          color=color.new(color.blue,   0),
@@ -262,6 +277,7 @@ if chochBull
     label.new(
          x=bar_index,
          y=low,
+         yloc=yloc.belowbar,
          text="CHoCH",
          style=label.style_label_up,
          color=color.new(color.orange, 0),
@@ -272,6 +288,7 @@ if chochBear
     label.new(
          x=bar_index,
          y=high,
+         yloc=yloc.abovebar,
          text="CHoCH",
          style=label.style_label_down,
          color=color.new(color.orange, 0),
