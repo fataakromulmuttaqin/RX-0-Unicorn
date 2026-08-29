@@ -492,6 +492,54 @@ class PaperPortfolio:
         )
         return True
 
+    def trailing_stop(
+        self,
+        trade_id: str,
+        current_price: float,
+        trail_pct: float = 0.5,
+    ) -> bool:
+        """
+        Trailing stop: after TP1 hit, trail SL by trail_pct * (current_price - entry).
+        Only moves SL in profitable direction (never loosens).
+        Returns True if SL was updated.
+
+        Args:
+            trade_id: trade to update
+            current_price: current market price
+            trail_pct: 0.5 = trail SL at 50% of current profit
+                      (e.g. if +2% profit, SL at +1%)
+        """
+        trade = self.journal.get_trade_by_id(trade_id)
+        if trade is None or trade["status"] != "open":
+            return False
+        entry = float(trade["entry_price"])
+        current_sl = float(trade["sl"])
+        direction = trade["direction"]
+
+        # Calculate profit distance
+        if direction == "long":
+            profit_distance = current_price - entry
+            if profit_distance <= 0:
+                return False  # no profit to trail
+            new_sl = entry + (profit_distance * trail_pct)
+            # Only ratchet up
+            if new_sl <= current_sl:
+                return False
+        else:  # short
+            profit_distance = entry - current_price
+            if profit_distance <= 0:
+                return False
+            new_sl = entry - (profit_distance * trail_pct)
+            # Only ratchet down
+            if new_sl >= current_sl:
+                return False
+
+        self.journal.conn.execute(
+            "UPDATE paper_trades SET sl = ? WHERE trade_id = ?",
+            (new_sl, trade_id),
+        )
+        return True
+
     def close_all(self, reason: str = "manual_close_all") -> int:
         """
         Emergency close every open position. Returns count closed.

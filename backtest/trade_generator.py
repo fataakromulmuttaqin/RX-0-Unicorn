@@ -47,12 +47,18 @@ def generate_trades_from_confluence(
     pairs: list[str] | None = None,
     timeframe: str = "1h",
     min_score: int = 3,
+    slippage_pct: float = 0.05,
+    commission_pct: float = 0.10,
 ) -> list[dict[str, Any]]:
     """
     Walk all available candles for all (or given) pairs, run confluence scorer,
     simulate trades with $1-2 risk per trade, return per-trade P/L list.
 
     For micro account ($100), position size = risk / stop_distance (in units).
+
+    Realistic cost model:
+    - slippage_pct: 0.05% per trade (typical for liquid crypto)
+    - commission_pct: 0.10% per trade (Binance spot default)
     """
     if pairs is None:
         pairs = _load_pairs()
@@ -160,12 +166,23 @@ def generate_trades_from_confluence(
                         exit_reason = "tp1"
                         break
 
-                # Calculate PnL
+                # Calculate PnL (with slippage + commission)
+                # Slippage: entry filled slightly worse, exit slightly better/worse
+                # Commission: applied on both entry and exit (round trip)
                 if direction == "long":
-                    pnl_per_unit = exit_price - entry_price
+                    # Entry: ask higher (slippage), Exit: bid lower (slippage)
+                    entry_filled = entry_price * (1 + slippage_pct / 100)
+                    exit_filled = exit_price * (1 - slippage_pct / 100)
+                    pnl_per_unit = exit_filled - entry_filled
                 else:
-                    pnl_per_unit = entry_price - exit_price
-                pnl = units * pnl_per_unit
+                    # Short: entry at bid lower, exit at ask higher
+                    entry_filled = entry_price * (1 - slippage_pct / 100)
+                    exit_filled = exit_price * (1 + slippage_pct / 100)
+                    pnl_per_unit = entry_filled - exit_filled
+                # Commission: round-trip (entry + exit)
+                # Cost = units * (entry_price + exit_price) * commission_pct / 100
+                commission = units * (entry_filled + exit_filled) * (commission_pct / 100)
+                pnl = units * pnl_per_unit - commission
 
                 trades.append({
                     "symbol": symbol,
@@ -176,6 +193,8 @@ def generate_trades_from_confluence(
                     "exit_reason": exit_reason,
                     "hold_bars": hold_bars,
                     "pnl": pnl,
+                    "slippage_cost": units * (entry_price * slippage_pct / 100 * 2),  # both sides
+                    "commission_cost": commission,
                     "capital_after": capital + pnl,
                 })
                 capital += pnl

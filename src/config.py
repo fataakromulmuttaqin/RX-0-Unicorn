@@ -71,12 +71,22 @@ DEFAULT_LIMIT: int = 500
 
 # --- Confluence Scorer (Phase 3) ---
 # Skor 0-4 berdasarkan berapa banyak dari 4 indikator yang align searah.
-CONFLUENCE_MIN_VALID: int = 3  # < ini -> SKIP (lihat STRATEGY.md)
+CONFLUENCE_MIN_VALID: int = 2  # turun dari 3 -> 2 (lebih banyak sinyal, WR lebih rendah)
 CONFLUENCE_A_PLUS: int = 4  # A+ setup -> size up
+CONFLUENCE_STRONG: int = 3  # Strong signal (3/4) -> normal size
 A_PLUS_SIZE_MULTIPLIER: float = 1.5
 VALID_SIZE_MULTIPLIER: float = 1.0
 SKIP_SIZE_MULTIPLIER: float = 0.0
 MIN_RISK_REWARD: float = 2.0  # R:R minimum 1:2 (TP >= 2x jarak SL)
+
+# --- Daemon signal filters (Phase 6+) ---
+# Volume filter: require current volume > 1.2x avg of last 20 bars
+DAEMON_VOLUME_MULT: float = 1.2
+DAEMON_VOLUME_LOOKBACK: int = 20
+# Trend filter: require ADX > 20 for entry (avoid choppy/ranging)
+DAEMON_MIN_ADX: float = 20.0
+# Spread filter: skip pairs with spread > 0.3% (illiquid)
+DAEMON_MAX_SPREAD_PCT: float = 0.3
 
 # --- Telegram Alert System (Phase 4) ---
 # Bot token & chat id dibaca dari .env via python-dotenv (lihat alerts/telegram.py).
