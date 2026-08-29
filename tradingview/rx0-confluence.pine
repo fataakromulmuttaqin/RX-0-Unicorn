@@ -165,8 +165,8 @@ structSignal = (bosBull or chochBull) ? 1 : (bosBear or chochBear) ? -1 : 0
 // Threshold untuk VALID/A+ bisa di-tune di input.
 
 // --- Inline RSI Wilder (mini) untuk bonus trend bias saja ---
-_rmaUp   = ta.rma(ta.max(close - close[1], 0.0), 14)
-_rmaDn   = ta.rma(ta.max(close[1] - close,    0.0), 14)
+_rmaUp   = ta.rma(math.max(close - close[1], 0.0), 14)
+_rmaDn   = ta.rma(math.max(close[1] - close,    0.0), 14)
 _rsiVal  = _rmaDn == 0.0 and _rmaUp == 0.0 ? 50.0 : _rmaDn == 0.0 ? 100.0 : 100.0 - 100.0 / (1.0 + _rmaUp / _rmaDn)
 _upMove  = high - high[1]
 _dnMove  = low[1] - low

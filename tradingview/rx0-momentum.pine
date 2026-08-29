@@ -66,8 +66,8 @@ wtOS      = input.float(-60.0, "WT Oversold",          maxval=0.0, step=5.0,    
 // =========================================================================
 // 2. RSI WILDER (alpha = 1/period, identik dengan Python _wilder_rma)
 // =========================================================================
-rmaUp   = ta.rma(ta.max(close - close[1], 0.0), rsiLen)
-rmaDn   = ta.rma(ta.max(close[1] - close,    0.0), rsiLen)
+rmaUp   = ta.rma(math.max(close - close[1], 0.0), rsiLen)
+rmaDn   = ta.rma(math.max(close[1] - close,    0.0), rsiLen)
 rsiVal  = rmaDn == 0.0 and rmaUp == 0.0 ? 50.0 : rmaDn == 0.0 ? 100.0 : 100.0 - 100.0 / (1.0 + rmaUp / rmaDn)
 
 // =========================================================================
