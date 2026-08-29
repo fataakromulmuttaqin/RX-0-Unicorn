@@ -68,9 +68,7 @@ wtOS      = input.float(-60.0, "WT Oversold",          maxval=0.0, step=5.0,    
 // =========================================================================
 rmaUp   = ta.rma(ta.max(close - close[1], 0.0), rsiLen)
 rmaDn   = ta.rma(ta.max(close[1] - close,    0.0), rsiLen)
-rsiVal  = rmaDn == 0.0 and rmaUp == 0.0 ? 50.0 :
-          rmaDn == 0.0                  ? 100.0 :
-          100.0 - 100.0 / (1.0 + rmaUp / rmaDn)
+rsiVal  = rmaDn == 0.0 and rmaUp == 0.0 ? 50.0 : rmaDn == 0.0 ? 100.0 : 100.0 - 100.0 / (1.0 + rmaUp / rmaDn)
 
 // =========================================================================
 // 3. ADX (Wilder)
@@ -148,8 +146,7 @@ hline(adxThresh, "ADX Threshold", color=color.new(color.orange, 50), hline.style
 // Regime: biru = trending, abu = ranging.
 regimeBg = isTrending ? color.new(color.blue, 95) : color.new(color.gray, 95)
 // WT zone: hijau = oversold, merah = overbought (overlay precedence: regime tint dim, zone tint lebih kuat).
-wtZoneBg = wt1 >= wtOB ? color.new(color.red,   92) :
-           wt1 <= wtOS ? color.new(color.green, 92) : na
+wtZoneBg = wt1 >= wtOB ? color.new(color.red, 92) : wt1 <= wtOS ? color.new(color.green, 92) : na
 //   v6 FIX: single ternary expression at global scope to avoid the
 //   CE10188 "local scope" error that v5 allowed via intermediate vars.
 bgcolor(

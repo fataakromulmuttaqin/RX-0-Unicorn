@@ -76,7 +76,7 @@ useRsiBonus = input.bool(true, "Add RSI-trend bonus for A+",  group="Confluence"
 // 2. LUMINANCE BREAKOUT
 // =========================================================================
 rangeHigh     = ta.highest(high, lumRangeLen)[1]
-rangeLow      = ta.lowest (low,  lumRangeLen)[1]
+rangeLow      = ta.lowest(low, lumRangeLen)[1]
 volAvg        = ta.sma(volume,  lumRangeLen)[1]
 rangeWidth    = rangeHigh - rangeLow
 isCons        = rangeWidth <= (close * lumWidthPct)
@@ -97,7 +97,7 @@ lumSignal      = lumLongBreak ? 1 : lumShortBreak ? -1 : 0
 // 3. STRUCTURE (BOS/CHoCH) — replika indicators/structure.py
 // =========================================================================
 ph = ta.pivothigh(high, pivLen, pivLen)
-pl = ta.pivotlow (low,  pivLen, pivLen)
+pl = ta.pivotlow(low, pivLen, pivLen)
 
 var float lastSH = na
 var float lastSL = na
@@ -110,33 +110,51 @@ prevSH = lastSH[1]
 prevSL = lastSL[1]
 
 var int bias = 0
-brokeUp   = not na(prevSH) and close > prevSH
-brokeDown = not na(prevSL) and close < prevSL
-
-// Simultaneous break: priority = opposite of current bias (CHoCH first).
-if brokeUp and brokeDown
-    brokeDown := bias == 1
-
 var bool bosBull   = false
 var bool bosBear   = false
 var bool chochBull = false
 var bool chochBear = false
 
-if brokeUp
-    if bias == -1
+brokeUp   = not na(prevSH) and close > prevSH
+brokeDown = not na(prevSL) and close < prevSL
+
+// Simultaneous break: priority = opposite of current bias (CHoCH first).
+// Resolved flags are written once, with the simultaneous case decided
+// here so downstream blocks never need to reassign `brokeUp`/`brokeDown`.
+var bool effUp   = false
+var bool effDown = false
+effUp   := false
+effDown := false
+if brokeUp and brokeDown
+    if bias == 1
+        effDown := true
+    else
+        effUp   := true
+else if brokeUp
+    effUp   := true
+else if brokeDown
+    effDown := true
+
+// Reset per-bar signals before evaluating the current bar.
+bosBull   := false
+bosBear   := false
+chochBull := false
+chochBear := false
+
+if effUp
+    bias := 1
+    if bias[1] == -1
         chochBull := true
     else
         bosBull   := true
-    bias := 1
-else if brokeDown
-    if bias == 1
+else if effDown
+    bias := -1
+    if bias[1] == 1
         chochBear := true
     else
         bosBear   := true
-    bias := -1
 
-structSignal = (bosBull or chochBull) ?  1 :
-               (bosBear or chochBear) ? -1 : 0
+structSignal = (bosBull or chochBull) ? 1 : (bosBear or chochBear) ? -1 : 0
 
 // =========================================================================
 // 4. CONFLUENCE SCORING (skala 0-3, sesuai confluence/scorer.py logic)
@@ -149,9 +167,7 @@ structSignal = (bosBull or chochBull) ?  1 :
 // --- Inline RSI Wilder (mini) untuk bonus trend bias saja ---
 _rmaUp   = ta.rma(ta.max(close - close[1], 0.0), 14)
 _rmaDn   = ta.rma(ta.max(close[1] - close,    0.0), 14)
-_rsiVal  = _rmaDn == 0.0 and _rmaUp == 0.0 ? 50.0 :
-           _rmaDn == 0.0                  ? 100.0 :
-           100.0 - 100.0 / (1.0 + _rmaUp / _rmaDn)
+_rsiVal  = _rmaDn == 0.0 and _rmaUp == 0.0 ? 50.0 : _rmaDn == 0.0 ? 100.0 : 100.0 - 100.0 / (1.0 + _rmaUp / _rmaDn)
 _upMove  = high - high[1]
 _dnMove  = low[1] - low
 _plusDM  = (_upMove > _dnMove and _upMove > 0) ? _upMove : 0.0
@@ -163,8 +179,7 @@ _minusDI = 100.0 * ta.rma(_minusDM, 14) / _trVal
 isTrending    = ta.rma(math.abs(_plusDI - _minusDI) / (_plusDI + _minusDI) * 100.0, 14) > 25.0
 trendUp       = _plusDI  > _minusDI
 trendDown     = _minusDI > _plusDI
-rsiBiasBonus  = (useRsiBonus and isTrending and trendUp)   ?  1 :
-                (useRsiBonus and isTrending and trendDown) ? -1 : 0
+rsiBiasBonus  = (useRsiBonus and isTrending and trendUp) ? 1 : (useRsiBonus and isTrending and trendDown) ? -1 : 0
 regimeText    = isTrending ? "trending" : "ranging"
 
 // Combine: long/short = base signals + bonus.
@@ -172,10 +187,8 @@ longCount  = (lumSignal   ==  1 ? 1 : 0) + (structSignal ==  1 ? 1 : 0) + (rsiBi
 shortCount = (lumSignal   == -1 ? 1 : 0) + (structSignal == -1 ? 1 : 0) + (rsiBiasBonus == -1 ? 1 : 0)
 
 confDir    = longCount > shortCount ? 1 : shortCount > longCount ? -1 : 0
-confScore  = confDir == 1  ? longCount  :
-             confDir == -1 ? shortCount : 0
-confGrade  = confScore >= minAPlus ? "A+" :
-             confScore >= minValid ? "valid" : "skip"
+confScore  = confDir == 1 ? longCount : confDir == -1 ? shortCount : 0
+confGrade  = confScore >= minAPlus ? "A+" : confScore >= minValid ? "valid" : "skip"
 
 // Rising-edge detection untuk alerts
 var int prevConfScore = 0
@@ -271,12 +284,8 @@ if chochBear
 //   the CE10188 "local scope" error.  Assigning the colour to a local
 //   variable inside an `if` block also works, but the inline ternary is
 //   the cleanest pattern.
-bgcolor(
-     confGrade == "A+"    and confDir ==  1 ? color.new(color.green, 88) :
-     confGrade == "A+"    and confDir == -1 ? color.new(color.red,   88) :
-     confGrade == "valid" and confDir ==  1 ? color.new(color.green, 95) :
-     confGrade == "valid" and confDir == -1 ? color.new(color.red,   95) : na,
-     title="Confluence Grade Background")
+gradeBgColor = confGrade == "A+" and confDir == 1 ? color.new(color.green, 88) : confGrade == "A+" and confDir == -1 ? color.new(color.red, 88) : confGrade == "valid" and confDir == 1 ? color.new(color.green, 95) : confGrade == "valid" and confDir == -1 ? color.new(color.red, 95) : na
+bgcolor(gradeBgColor, title="Confluence Grade Background")
 
 // 5f. Grade markers
 plotshape(newAPlusLong,  title="A+ Long",  text="A+▲", style=shape.triangleup,   location=location.belowbar, color=color.new(color.green, 0),  textcolor=color.new(color.green, 0),  size=size.normal)
