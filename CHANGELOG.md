@@ -37,13 +37,26 @@ Format: [Semantic Versioning](https://semver.org/)
 
 ---
 
-## [0.2.0] — Planned
+## [0.2.0] — 2026-08-29 (In Progress)
 
 ### Phase 2: Core Indicator Engine
-- Luminance Breakout Engine (Python port dari LuxAlgo)
-- RSI Regime Filter
-- BOS/CHoCH Structure Dashboard
-- WaveTrend Oscillator
+
+#### Added
+- ✅ `indicators/luminance.py` — Luminance Breakout Engine (range breakout + volume confirm, filter consolidation minimum)
+- ✅ `indicators/rsi_regime.py` — RSI Regime Filter (Wilder RSI + ADX regime classification, anti-fade-trend guard)
+- ✅ `indicators/structure.py` — BOS/CHoCH Structure Dashboard (fractal swing detection, trend bias tracking)
+- ✅ `indicators/wavetrend.py` — WaveTrend Oscillator (LazyBear/LuxAlgo formula, oversold/overbought cross signals)
+- ✅ `indicators/_utils.py` — shared OHLCV validation helper
+- ✅ `main.py scan` — CLI command baru, jalankan 4 indikator di data tersimpan + confluence score preview (0-4)
+- ✅ `tests/test_indicators.py` — 32 unit tests (synthetic OHLCV, edge cases: flat price, insufficient rows, signal bounds, anti-fade-trend check)
+- ✅ `numpy` ditambahkan ke requirements.txt
+
+#### Fixed
+- 🐛 `tests/test_fetcher.py::_network_available` — sebelumnya hanya cek TCP connect (false positive di lingkungan dengan egress proxy terbatas); sekarang melakukan HTTPS ping sungguhan ke Binance sebelum menjalankan live network test
+
+#### Notes
+- Setiap indikator mengembalikan DataFrame dengan kolom `*_signal` (1/-1/0) yang konsisten, siap dikonsumsi Confluence Scorer di Phase 3
+- Confluence scoring resmi (0-4 + entry rules, position sizing 1.5x untuk A+ setup) masih Phase 3 — `main.py scan` saat ini hanya preview sederhana (hitung sisi long/short yang paling banyak align)
 
 ---
 

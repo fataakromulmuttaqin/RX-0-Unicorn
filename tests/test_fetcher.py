@@ -186,45 +186,40 @@ def test_fetcher_symbol_normalization():
 
 
 # --- Fetcher (network, optional) ---
-def _network_available(
-    host: str = "api.binance.com", port: int = 443, timeout: float = 2.0
-) -> bool:
+def _network_available(host: str = "api.binance.com", port: int = 443, timeout: float = 2.0) -> bool:
+    """
+    Cek apakah Binance benar-benar bisa diakses.
+
+    TCP connect saja tidak cukup: di lingkungan dengan egress proxy yang
+    membatasi domain (mis. sandbox CI), socket.create_connection() bisa
+    sukses connect ke proxy padahal request sesungguhnya ke domain target
+    tetap ditolak. Jadi kita lakukan HTTPS request ringan sungguhan dan
+    anggap network tersedia hanya kalau responsenya benar-benar balik.
+    """
     try:
         with socket.create_connection((host, port), timeout=timeout):
-            return True
+            pass
     except OSError:
         return False
 
-
-def _alt_host_available(
-    host: str = "data-api.binance.vision", port: int = 443, timeout: float = 2.0
-) -> bool:
-    """Cek apakah mirror alternatif reachable — beberapa env hanya punya
-    akses ke data-api.binance.vision, bukan api.binance.com langsung."""
     try:
-        with socket.create_connection((host, port), timeout=timeout):
-            return True
-    except OSError:
+        import urllib.request
+
+        req = urllib.request.Request(
+            f"https://{host}/api/v3/ping", method="GET"
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return 200 <= resp.status < 300
+    except Exception:
         return False
-
-
-def _resolve_test_hostname() -> str | None:
-    """Tentukan hostname untuk live tests. Prefer env var, fallback ke
-    data-api mirror kalau api.binance.com tidak reachable."""
-    if TEST_HOSTNAME:
-        return TEST_HOSTNAME
-    if not _network_available() and _alt_host_available():
-        return "data-api.binance.vision"
-    return None
 
 
 @pytest.mark.skipif(
-    not (_network_available() or _alt_host_available()),
+    not _network_available(),
     reason="Network unavailable — skip live Binance test",
 )
 def test_fetcher_real_binance_btc():
-    host = _resolve_test_hostname()
-    f = CryptoFetcher("binance", hostname=host)
+    f = CryptoFetcher("binance")
     try:
         df = f.fetch_ohlcv("BTC/USDT", "1h", limit=10)
     finally:
@@ -241,12 +236,11 @@ def test_fetcher_real_binance_btc():
 
 
 @pytest.mark.skipif(
-    not (_network_available() or _alt_host_available()),
+    not _network_available(),
     reason="Network unavailable — skip live Binance multi-symbol test",
 )
 def test_fetcher_real_binance_multiple():
-    host = _resolve_test_hostname()
-    f = CryptoFetcher("binance", hostname=host)
+    f = CryptoFetcher("binance")
     try:
         results = f.fetch_multiple(["BTC/USDT", "ETH/USDT"], "1h", limit=20)
     finally:

@@ -1,10 +1,12 @@
 """
-RX-0 Unicorn — Phase 1 CLI entry point.
+RX-0 Unicorn — Phase 1 + Phase 2 CLI entry point.
 
 Subcommands:
     fetch   Tarik candle untuk watchlist dan simpan ke SQLite.
     status  Tampilkan statistik database.
     cleanup Hapus candle lama sesuai retention policy.
+    scan    Jalankan 4 indikator (Phase 2) di data yang sudah tersimpan dan
+            tampilkan confluence score per simbol (preview Phase 3).
 """
 
 from __future__ import annotations
@@ -23,6 +25,12 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from data.fetchers.crypto_fetcher import CryptoFetcher
 from data.storage.candle_db import CandleDB
+from indicators import (
+    compute_luminance,
+    compute_rsi_regime,
+    compute_structure,
+    compute_wavetrend,
+)
 from src.config import (
     DEFAULT_LIMIT,
     DEFAULT_TIMEFRAME,
@@ -31,6 +39,10 @@ from src.config import (
     WATCHLIST_TIERS,
 )
 from src.logger import logger
+
+# Minimal bar count supaya semua indikator (terutama RSI/ADX & WaveTrend)
+# punya cukup warm-up data untuk hasil yang stabil.
+SCAN_MIN_CANDLES: int = 120
 
 
 def load_watchlist(path: Path = WATCHLIST_PATH) -> dict[str, list[str]]:
@@ -178,6 +190,107 @@ def cmd_cleanup(_args: argparse.Namespace) -> int:
     return 0
 
 
+def _scan_symbol(db: CandleDB, symbol: str, timeframe: str) -> dict | None:
+    """
+    Jalankan 4 indikator Phase 2 untuk satu simbol dan kembalikan ringkasan
+    bar terakhir. Return None kalau data belum cukup.
+    """
+    df = db.get_candles(pair=symbol, timeframe=timeframe)
+    if df is None or len(df) < SCAN_MIN_CANDLES:
+        return None
+
+    try:
+        lum = compute_luminance(df)
+        rsi = compute_rsi_regime(df)
+        struct = compute_structure(df)
+        wt = compute_wavetrend(df)
+    except ValueError as exc:
+        logger.warning(f"Scan skip {symbol}: {exc}")
+        return None
+
+    signals = {
+        "luminance": int(lum["luminance_signal"].iloc[-1]),
+        "rsi_regime": int(rsi["rsi_regime_signal"].iloc[-1]),
+        "structure": int(struct["structure_signal"].iloc[-1]),
+        "wavetrend": int(wt["wavetrend_signal"].iloc[-1]),
+    }
+    long_count = sum(1 for v in signals.values() if v == 1)
+    short_count = sum(1 for v in signals.values() if v == -1)
+    # Confluence score sederhana: sisi (long/short) dengan alignment terbanyak.
+    # Full 0-4 scoring + entry rules resmi ada di Phase 3 (confluence/scorer.py).
+    if long_count >= short_count:
+        direction, score = "long", long_count
+    else:
+        direction, score = "short", short_count
+
+    return {
+        "symbol": symbol,
+        "close": float(df["close"].iloc[-1]),
+        "regime": str(rsi["regime"].iloc[-1]),
+        "signals": signals,
+        "direction": direction,
+        "score": score,
+    }
+
+
+def _format_scan_results(results: list[dict], timeframe: str) -> str:
+    """Format hasil scan jadi tabel teks, diurutkan dari confluence tertinggi."""
+    results_sorted = sorted(results, key=lambda r: r["score"], reverse=True)
+    lines = [
+        "=" * 78,
+        f"RX-0 Unicorn — Scan Results (timeframe={timeframe})",
+        "=" * 78,
+        f"{'Symbol':<12}{'Close':>12}  {'Regime':<10}{'Dir':<6}{'Score':<7}Signals",
+        "-" * 78,
+    ]
+    for r in results_sorted:
+        sig_str = " ".join(
+            f"{name[:3]}:{val:+d}" for name, val in r["signals"].items()
+        )
+        star = " *A+*" if r["score"] == 4 else ""
+        lines.append(
+            f"{r['symbol']:<12}{r['close']:>12.4f}  {r['regime']:<10}"
+            f"{r['direction']:<6}{r['score']}/4{star:<4} {sig_str}"
+        )
+    if not results_sorted:
+        lines.append("(tidak ada simbol dengan data cukup — jalankan 'fetch' dulu)")
+    lines.append("=" * 78)
+    return "\n".join(lines)
+
+
+def cmd_scan(args: argparse.Namespace) -> int:
+    """
+    Scan watchlist (atau satu simbol) dengan 4 indikator Phase 2 dan
+    tampilkan confluence score per simbol berdasarkan bar terakhir.
+    """
+    if args.symbol:
+        symbols = [args.symbol.strip().upper()]
+    else:
+        watchlist = load_watchlist()
+        symbols = resolve_symbols(watchlist, args.tier)
+
+    if not symbols:
+        logger.error("Tidak ada simbol untuk di-scan")
+        return 1
+
+    results: list[dict] = []
+    with CandleDB() as db:
+        for sym in symbols:
+            res = _scan_symbol(db, sym, args.timeframe)
+            if res is not None:
+                results.append(res)
+
+    print(_format_scan_results(results, args.timeframe))
+    if args.min_score is not None:
+        hits = [r for r in results if r["score"] >= args.min_score]
+        if hits:
+            names = ", ".join(f"{r['symbol']} ({r['direction']})" for r in hits)
+            logger.success(f"Confluence >= {args.min_score}: {names}")
+        else:
+            logger.info(f"Tidak ada simbol dengan confluence >= {args.min_score}")
+    return 0
+
+
 # --- Argparse ---
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -227,6 +340,42 @@ def build_parser() -> argparse.ArgumentParser:
         "cleanup",
         help="Hapus candle lama sesuai retention policy (90d intraday, daily forever).",
     ).set_defaults(func=cmd_cleanup)
+
+    # scan
+    p_scan = sub.add_parser(
+        "scan",
+        help=(
+            "Jalankan 4 indikator Phase 2 (Luminance/RSI Regime/Structure/"
+            "WaveTrend) di data tersimpan dan tampilkan confluence score."
+        ),
+    )
+    p_scan.add_argument(
+        "--symbol",
+        "-s",
+        default=None,
+        help="Scan satu simbol saja (e.g. BTC/USDT). Override --tier.",
+    )
+    p_scan.add_argument(
+        "--tier",
+        choices=WATCHLIST_TIERS,
+        default=None,
+        help="Filter ke satu tier watchlist (default: semua). Diabaikan jika --symbol diset.",
+    )
+    p_scan.add_argument(
+        "--timeframe",
+        "-t",
+        choices=VALID_TIMEFRAMES,
+        default=DEFAULT_TIMEFRAME,
+        help=f"Timeframe candle (default: {DEFAULT_TIMEFRAME}).",
+    )
+    p_scan.add_argument(
+        "--min-score",
+        type=int,
+        default=3,
+        choices=[0, 1, 2, 3, 4],
+        help="Highlight simbol dengan confluence score >= nilai ini (default: 3).",
+    )
+    p_scan.set_defaults(func=cmd_scan)
 
     return parser
 

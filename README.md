@@ -2,7 +2,7 @@
 
 > **Crypto trading bot bertenaga AI dengan strategi LuxAlgo-grade — dibangun dari nol untuk profit konsisten.**
 
-[![Status](https://img.shields.io/badge/status-Phase%201%20Development-yellow)]()
+[![Status](https://img.shields.io/badge/status-Phase%202%20Development-yellow)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-Private-red)]()
 
@@ -78,8 +78,8 @@ Berdasarkan riset dari [LuxAlgo Library](https://www.luxalgo.com/library/), RX-0
 
 | Fase | Nama | Status | Output | Estimasi |
 |------|------|--------|--------|----------|
-| **1** | **Data Foundation** | 🟡 In Progress | Candle puller + SQLite + watchlist | 1-2 hari |
-| 2 | Core Indicator Engine | ⏳ Pending | Luminance + RSI Regime + BOS/CHoCH + WaveTrend (Python port) | 3-4 hari |
+| **1** | **Data Foundation** | ✅ Done | Candle puller + SQLite + watchlist | 1-2 hari |
+| **2** | **Core Indicator Engine** | 🟡 In Progress | Luminance + RSI Regime + BOS/CHoCH + WaveTrend (Python port) | 3-4 hari |
 | 3 | Confluence Scorer | ⏳ Pending | 0-4 scoring logic, entry rules | 1 hari |
 | 4 | Telegram Alert System | ⏳ Pending | Alert format + cooldown + top 5 ranking | 1-2 hari |
 | 5 | Backtest Engine | ⏳ Pending | Historical replay + 6 metrics + equity curve | 2-3 hari |
@@ -127,8 +127,9 @@ python main.py fetch --tier tier_1_major --timeframe 1h --limit 500
 # 3. Check status
 python main.py status
 
-# 4. (Phase 2) Run scanner
+# 4. Run scanner (Phase 2 indicators + confluence preview)
 python main.py scan --timeframe 1h
+python main.py scan --symbol BTC/USDT --timeframe 1h --min-score 3
 
 # 5. (Phase 4) Start alert daemon
 python main.py daemon --interval 300
@@ -150,11 +151,12 @@ luxalgo-trader/
 ├── src/
 │   ├── config.py                  # Constants, paths, settings
 │   └── logger.py                  # Loguru setup
-├── indicators/                     # Phase 2
-│   ├── luminance.py
-│   ├── rsi_regime.py
-│   ├── structure.py
-│   └── wavetrend.py
+├── indicators/                     # Phase 2 ✅
+│   ├── _utils.py                   # OHLCV validation helper
+│   ├── luminance.py                # Luminance Breakout Engine
+│   ├── rsi_regime.py               # RSI Regime Filter (RSI + ADX)
+│   ├── structure.py                # BOS/CHoCH Structure Dashboard
+│   └── wavetrend.py                # WaveTrend Oscillator
 ├── confluence/                    # Phase 3
 │   └── scorer.py
 ├── alerts/                         # Phase 4
@@ -240,14 +242,16 @@ Saat backtest & paper trading jalan, RX-0 Unicorn diukur dengan **6 metrics waji
 - [x] Logger setup
 - [ ] (Coming) Backfill historical data
 
-### Phase 2 — Core Indicators (Next)
-- [ ] Luminance Breakout Engine (Python port)
-- [ ] RSI Regime Filter
-- [ ] BOS/CHoCH Structure
-- [ ] WaveTrend Oscillator
+### Phase 2 — Core Indicators (Current)
+- [x] Luminance Breakout Engine (Python port)
+- [x] RSI Regime Filter (RSI + ADX regime, anti-fade-trend guard)
+- [x] BOS/CHoCH Structure (fractal swing detection)
+- [x] WaveTrend Oscillator
+- [x] `main.py scan` CLI preview + unit tests (32 tests, synthetic OHLCV)
+- [ ] (Coming) Formal Confluence Scorer module (Phase 3)
 
 ### Phase 3-7 (Planned)
-- Confluence scorer, Telegram alerts, backtest engine, paper trading, auto-trade
+- Confluence scorer (0-4 formal scoring + entry rules), Telegram alerts, backtest engine, paper trading, auto-trade
 
 ---
 
