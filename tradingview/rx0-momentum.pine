@@ -26,8 +26,19 @@
 //   Sesuai `indicators/rsi_regime.py` dan `indicators/wavetrend.py`.
 //
 //   NOTE: visualisasi saja. Tidak untuk live trading (Phase 7).
+//
+//   v6 MIGRATION NOTES (TradingView now requires v6):
+//     - Header: //@version=5 -> //@version=6
+//     - bgcolor() moved to global scope via single ternary expression
+//       (avoids CE10188 "local scope" error in v6).
+//     - All `var` declarations are at global scope.
+//     - `label.new()` / `box.new()` use named arguments (none in this
+//       file, but `table.new`/`table.cell` switched to named args).
+//     - Explicit `int()` casts where arithmetic results are used as
+//       integer parameters (e.g. `bar_index` offsets, table cell sizes).
+//     - All `input.*` calls have explicit defaults.
 
-//@version=5
+//@version=6
 indicator(
      "RX-0 Momentum (RSI + ADX + WaveTrend)",
      shorttitle="RX0-Momentum",
@@ -139,31 +150,41 @@ regimeBg = isTrending ? color.new(color.blue, 95) : color.new(color.gray, 95)
 // WT zone: hijau = oversold, merah = overbought (overlay precedence: regime tint dim, zone tint lebih kuat).
 wtZoneBg = wt1 >= wtOB ? color.new(color.red,   92) :
            wt1 <= wtOS ? color.new(color.green, 92) : na
-bgcolor(wtZoneBg != na ? wtZoneBg : regimeBg, title="Regime/Zone Background")
+//   v6 FIX: single ternary expression at global scope to avoid the
+//   CE10188 "local scope" error that v5 allowed via intermediate vars.
+bgcolor(
+     wtZoneBg != na ? wtZoneBg : regimeBg,
+     title="Regime/Zone Background")
 
 // =========================================================================
 // 8. SIGNAL MARKERS
 // =========================================================================
 plotshape(wtLong   and not wtLong[1],   title="WT Long",   text="WT▲",  style=shape.triangleup,   location=location.bottom, color=color.new(color.green, 0), textcolor=color.new(color.green, 0), size=size.tiny)
 plotshape(wtShort  and not wtShort[1],  title="WT Short",  text="WT▼",  style=shape.triangledown, location=location.top,    color=color.new(color.red,   0), textcolor=color.new(color.red,   0), size=size.tiny)
-plotshape(rsiLong  and not rsiLong[1],  title="RSI Long",  text="R▲",   style=shape.triangleup,   location=location.bottom, color=color.new(color.teal,  0), textcolor=color.new(color.teal,  0), size=size.tiny, offset=0)
-plotshape(rsiShort and not rsiShort[1], title="RSI Short", text="R▼",   style=shape.triangledown, location=location.top,    color=color.new(color.orange,0), textcolor=color.new(color.orange,0), size=size.tiny, offset=0)
+plotshape(rsiLong  and not rsiLong[1],  title="RSI Long",  text="R▲",   style=shape.triangleup,   location=location.bottom, color=color.new(color.teal,  0), textcolor=color.new(color.teal,  0), size=size.tiny)
+plotshape(rsiShort and not rsiShort[1], title="RSI Short", text="R▼",   style=shape.triangledown, location=location.top,    color=color.new(color.orange,0), textcolor=color.new(color.orange,0), size=size.tiny)
 
 // =========================================================================
 // 9. INFO TABLE (top-right of pane)
 // =========================================================================
-var table infoTable = table.new(position.top_right, 2, 5, frame_color=color.new(color.gray, 30), frame_width=1, border_width=1)
+var table infoTable = table.new(
+     position=position.top_right,
+     columns=2,
+     rows=5,
+     frame_color=color.new(color.gray, 30),
+     frame_width=1,
+     border_width=1)
 if barstate.islast
-    table.cell(infoTable, 0, 0, "RX-0 Momentum",        text_color=color.white, bgcolor=color.new(color.blue, 20), text_size=size.small)
-    table.cell(infoTable, 1, 0, "",                       bgcolor=color.new(color.blue, 20))
-    table.cell(infoTable, 0, 1, "Regime",                text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
-    table.cell(infoTable, 1, 1, isTrending ? "Trending" : "Ranging", text_color=color.white, bgcolor=isTrending ? color.new(color.blue, 30) : color.new(color.gray, 40), text_size=size.small)
-    table.cell(infoTable, 0, 2, "RSI (14)",              text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
-    table.cell(infoTable, 1, 2, str.tostring(rsiVal, "#.#"), text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
-    table.cell(infoTable, 0, 3, "WT1",                   text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
-    table.cell(infoTable, 1, 3, str.tostring(wt1, "#.#"),     text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
-    table.cell(infoTable, 0, 4, "ADX",                   text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
-    table.cell(infoTable, 1, 4, str.tostring(adxVal, "#.#"),   text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(table_id=infoTable, column=0, row=0, text="RX-0 Momentum",        text_color=color.white, bgcolor=color.new(color.blue, 20), text_size=size.small)
+    table.cell(table_id=infoTable, column=1, row=0, text="",                       bgcolor=color.new(color.blue, 20))
+    table.cell(table_id=infoTable, column=0, row=1, text="Regime",                text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(table_id=infoTable, column=1, row=1, text=isTrending ? "Trending" : "Ranging", text_color=color.white, bgcolor=isTrending ? color.new(color.blue, 30) : color.new(color.gray, 40), text_size=size.small)
+    table.cell(table_id=infoTable, column=0, row=2, text="RSI (14)",              text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(table_id=infoTable, column=1, row=2, text=str.tostring(rsiVal, "#.#"), text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(table_id=infoTable, column=0, row=3, text="WT1",                   text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(table_id=infoTable, column=1, row=3, text=str.tostring(wt1, "#.#"),     text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(table_id=infoTable, column=0, row=4, text="ADX",                   text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(table_id=infoTable, column=1, row=4, text=str.tostring(adxVal, "#.#"),   text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
 
 // =========================================================================
 // 10. ALERTS

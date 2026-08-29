@@ -34,8 +34,17 @@
 //   di chart. Pasangkan dengan `rx0-momentum.pine` di pane terpisah.
 //
 //   NOTE: visualisasi saja. Tidak untuk live trading (Phase 7).
+//
+//   v6 MIGRATION NOTES (TradingView now requires v6):
+//     - Header: //@version=5 -> //@version=6
+//     - bgcolor() moved to global scope via single ternary expression
+//       (avoids CE10188 "local scope" error in v6).
+//     - All `var` declarations are at global scope.
+//     - `label.new()` / `box.new()` use named arguments.
+//     - Explicit `int()` casts for arithmetic involving series float.
+//     - All `input.*` calls have explicit defaults.
 
-//@version=5
+//@version=6
 indicator(
      "RX-0 Confluence (Main)",
      shorttitle="RX0-Confluence",
@@ -60,6 +69,8 @@ showSwings  = input.bool(true, "Mark Swing Points",       group="Structure")
 // --- Confluence grading (skala 0-3 di script ini) ---
 minValid    = input.int(2, "Min Score for VALID", minval=1, maxval=3, group="Confluence")
 minAPlus    = input.int(3, "Min Score for A+",    minval=1, maxval=3, group="Confluence")
+useRsiBonus = input.bool(true, "Add RSI-trend bonus for A+",  group="Confluence",
+     tooltip="Tambahan +1/-1 dari RSI+DI alignment (membantu capai A+ walau cuma 2 chart-overlay). Nonaktifkan untuk scoring murni 2-indikator.")
 
 // =========================================================================
 // 2. LUMINANCE BREAKOUT
@@ -134,8 +145,6 @@ structSignal = (bosBull or chochBull) ?  1 :
 // Kita tambahkan "rsiBiasBonus": RSI Wilder memberi bonus +1 long/-1 short
 // kalau trend-aligned (DI+ > DI-) supaya A+ setup tetap jarang & meaningful.
 // Threshold untuk VALID/A+ bisa di-tune di input.
-useRsiBonus   = input.bool(true, "Add RSI-trend bonus for A+",  group="Confluence",
-     tooltip="Tambahan +1/-1 dari RSI+DI alignment (membantu capai A+ walau cuma 2 chart-overlay). Nonaktifkan untuk scoring murni 2-indikator.")
 
 // --- Inline RSI Wilder (mini) untuk bonus trend bias saja ---
 _rmaUp   = ta.rma(ta.max(close - close[1], 0.0), 14)
@@ -193,29 +202,81 @@ if lumShowBox and isCons and lumConsCount >= 1
          bottom=rangeLow,
          bgcolor=color.new(color.teal, 90),
          border_color=color.new(color.teal, 40),
-         border_width=1)
+         border_width=int(1))
 
 // 5c. Swing markers
 if showSwings and not na(ph)
-    label.new(bar_index[pivLen], ph, "▼", style=label.style_label_down, color=color.new(color.red,   70), textcolor=color.new(color.red,   0), size=size.tiny)
+    label.new(
+         x=bar_index[pivLen],
+         y=ph,
+         text="▼",
+         style=label.style_label_down,
+         color=color.new(color.red,   70),
+         textcolor=color.new(color.red,   0),
+         size=size.tiny)
 if showSwings and not na(pl)
-    label.new(bar_index[pivLen], pl, "▲", style=label.style_label_up,   color=color.new(color.green, 70), textcolor=color.new(color.green, 0), size=size.tiny)
+    label.new(
+         x=bar_index[pivLen],
+         y=pl,
+         text="▲",
+         style=label.style_label_up,
+         color=color.new(color.green, 70),
+         textcolor=color.new(color.green, 0),
+         size=size.tiny)
 
 // 5d. BOS/CHoCH labels
 if bosBull
-    label.new(bar_index, low,  "BOS",   style=label.style_label_up,   color=color.new(color.blue,   0), textcolor=color.white, size=size.small, tooltip="Break of Structure — bullish continuation")
+    label.new(
+         x=bar_index,
+         y=low,
+         text="BOS",
+         style=label.style_label_up,
+         color=color.new(color.blue,   0),
+         textcolor=color.white,
+         size=size.small,
+         tooltip="Break of Structure — bullish continuation")
 if bosBear
-    label.new(bar_index, high, "BOS",   style=label.style_label_down, color=color.new(color.blue,   0), textcolor=color.white, size=size.small, tooltip="Break of Structure — bearish continuation")
+    label.new(
+         x=bar_index,
+         y=high,
+         text="BOS",
+         style=label.style_label_down,
+         color=color.new(color.blue,   0),
+         textcolor=color.white,
+         size=size.small,
+         tooltip="Break of Structure — bearish continuation")
 if chochBull
-    label.new(bar_index, low,  "CHoCH", style=label.style_label_up,   color=color.new(color.orange, 0), textcolor=color.white, size=size.small, tooltip="Change of Character — bullish reversal")
+    label.new(
+         x=bar_index,
+         y=low,
+         text="CHoCH",
+         style=label.style_label_up,
+         color=color.new(color.orange, 0),
+         textcolor=color.white,
+         size=size.small,
+         tooltip="Change of Character — bullish reversal")
 if chochBear
-    label.new(bar_index, high, "CHoCH", style=label.style_label_down, color=color.new(color.orange, 0), textcolor=color.white, size=size.small, tooltip="Change of Character — bearish reversal")
+    label.new(
+         x=bar_index,
+         y=high,
+         text="CHoCH",
+         style=label.style_label_down,
+         color=color.new(color.orange, 0),
+         textcolor=color.white,
+         size=size.small,
+         tooltip="Change of Character — bearish reversal")
 
 // 5e. Background tint by grade
-bgcolor(confGrade == "A+" and confDir ==  1 ? color.new(color.green, 88) :
-        confGrade == "A+" and confDir == -1 ? color.new(color.red,   88) :
-        confGrade == "valid" and confDir ==  1 ? color.new(color.green, 95) :
-        confGrade == "valid" and confDir == -1 ? color.new(color.red,   95) : na, title="Confluence Grade Background")
+//   v6 FIX: single ternary expression evaluated at global scope to avoid
+//   the CE10188 "local scope" error.  Assigning the colour to a local
+//   variable inside an `if` block also works, but the inline ternary is
+//   the cleanest pattern.
+bgcolor(
+     confGrade == "A+"    and confDir ==  1 ? color.new(color.green, 88) :
+     confGrade == "A+"    and confDir == -1 ? color.new(color.red,   88) :
+     confGrade == "valid" and confDir ==  1 ? color.new(color.green, 95) :
+     confGrade == "valid" and confDir == -1 ? color.new(color.red,   95) : na,
+     title="Confluence Grade Background")
 
 // 5f. Grade markers
 plotshape(newAPlusLong,  title="A+ Long",  text="A+▲", style=shape.triangleup,   location=location.belowbar, color=color.new(color.green, 0),  textcolor=color.new(color.green, 0),  size=size.normal)
@@ -224,23 +285,29 @@ plotshape(newValidLong  and not newAPlusLong,  title="Valid Long",  text="V▲",
 plotshape(newValidShort and not newAPlusShort, title="Valid Short", text="V▼", style=shape.triangledown, location=location.abovebar, color=color.new(color.red,   30), textcolor=color.new(color.red,   30), size=size.tiny)
 
 // 5g. Info table (top-right)
-var table infoTable = table.new(position.top_right, 2, 6, frame_color=color.new(color.gray, 30), frame_width=1, border_width=1)
+var table infoTable = table.new(
+     position=position.top_right,
+     columns=2,
+     rows=6,
+     frame_color=color.new(color.gray, 30),
+     frame_width=1,
+     border_width=1)
 if barstate.islast
     gradeColor = confGrade == "A+" ? color.green : confGrade == "valid" ? color.new(color.green, 50) : color.gray
     dirText    = confDir == 1 ? "Long" : confDir == -1 ? "Short" : "None"
     dirColor   = confDir == 1 ? color.green : confDir == -1 ? color.red : color.gray
-    table.cell(infoTable, 0, 0, "RX-0 Confluence",       text_color=color.white, bgcolor=color.new(color.blue, 20), text_size=size.small)
-    table.cell(infoTable, 1, 0, "",                       bgcolor=color.new(color.blue, 20))
-    table.cell(infoTable, 0, 1, "Score",                  text_color=color.white, bgcolor=color.new(color.gray,  70), text_size=size.small)
-    table.cell(infoTable, 1, 1, str.tostring(confScore) + "/3", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
-    table.cell(infoTable, 0, 2, "Grade",                  text_color=color.white, bgcolor=color.new(color.gray,  70), text_size=size.small)
-    table.cell(infoTable, 1, 2, confGrade,                text_color=color.white, bgcolor=gradeColor,                text_size=size.small)
-    table.cell(infoTable, 0, 3, "Direction",              text_color=color.white, bgcolor=color.new(color.gray,  70), text_size=size.small)
-    table.cell(infoTable, 1, 3, dirText,                  text_color=color.white, bgcolor=dirColor,                  text_size=size.small)
-    table.cell(infoTable, 0, 4, "Regime",                 text_color=color.white, bgcolor=color.new(color.gray,  70), text_size=size.small)
-    table.cell(infoTable, 1, 4, regimeText,               text_color=color.white, bgcolor=isTrending ? color.new(color.green, 50) : color.new(color.gray, 50), text_size=size.small)
-    table.cell(infoTable, 0, 5, "Signals (Lum/Str/RSI)",  text_color=color.white, bgcolor=color.new(color.gray,  70), text_size=size.tiny)
-    table.cell(infoTable, 1, 5, str.tostring(lumSignal) + " / " + str.tostring(structSignal) + " / " + str.tostring(rsiBiasBonus), text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.tiny)
+    table.cell(table_id=infoTable, column=0, row=0, text="RX-0 Confluence",       text_color=color.white, bgcolor=color.new(color.blue, 20), text_size=size.small)
+    table.cell(table_id=infoTable, column=1, row=0, text="",                       bgcolor=color.new(color.blue, 20))
+    table.cell(table_id=infoTable, column=0, row=1, text="Score",                  text_color=color.white, bgcolor=color.new(color.gray,  70), text_size=size.small)
+    table.cell(table_id=infoTable, column=1, row=1, text=str.tostring(confScore) + "/3", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(table_id=infoTable, column=0, row=2, text="Grade",                  text_color=color.white, bgcolor=color.new(color.gray,  70), text_size=size.small)
+    table.cell(table_id=infoTable, column=1, row=2, text=confGrade,                text_color=color.white, bgcolor=gradeColor,                text_size=size.small)
+    table.cell(table_id=infoTable, column=0, row=3, text="Direction",              text_color=color.white, bgcolor=color.new(color.gray,  70), text_size=size.small)
+    table.cell(table_id=infoTable, column=1, row=3, text=dirText,                  text_color=color.white, bgcolor=dirColor,                  text_size=size.small)
+    table.cell(table_id=infoTable, column=0, row=4, text="Regime",                 text_color=color.white, bgcolor=color.new(color.gray,  70), text_size=size.small)
+    table.cell(table_id=infoTable, column=1, row=4, text=regimeText,               text_color=color.white, bgcolor=isTrending ? color.new(color.green, 50) : color.new(color.gray, 50), text_size=size.small)
+    table.cell(table_id=infoTable, column=0, row=5, text="Signals (Lum/Str/RSI)",  text_color=color.white, bgcolor=color.new(color.gray,  70), text_size=size.tiny)
+    table.cell(table_id=infoTable, column=1, row=5, text=str.tostring(lumSignal) + " / " + str.tostring(structSignal) + " / " + str.tostring(rsiBiasBonus), text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.tiny)
 
 // =========================================================================
 // 6. UPDATE PREV STATE
