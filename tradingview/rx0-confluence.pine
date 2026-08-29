@@ -206,20 +206,23 @@ newValidShort = confScore >= minValid and confScore < minAPlus and confDir == -1
 plotshape(lumLongBreak,   title="Luminance Long",  text="Lum▲", style=shape.triangleup,   location=location.belowbar, color=color.new(color.green, 0), textcolor=color.new(color.green, 0), size=size.small)
 plotshape(lumShortBreak,  title="Luminance Short", text="Lum▼", style=shape.triangledown, location=location.abovebar, color=color.new(color.red,   0), textcolor=color.new(color.red,   0), size=size.small)
 
-// 5b. Luminance range box
-//   NOTE: box.new() in Pine v5/v6 does NOT have a `yloc` parameter — boxes
-//   are always anchored to price (top/bottom are price values). Only
-//   label.new() and plot() have yloc. So this box is always price-anchored
-//   by design — that's why it stays at the same price level when you scroll.
-if lumShowBox and isCons and lumConsCount >= 1
-    box.new(
-         left=bar_index - lumConsCount,
-         top=rangeHigh,
-         right=bar_index + 20,
-         bottom=rangeLow,
-         bgcolor=color.new(color.teal, 90),
-         border_color=color.new(color.teal, 40),
-         border_width=int(1))
+// 5b. Luminance range as line plots (smooth, follows candle when zooming)
+//   Previous: box.new() — price-anchored, looked "stuck" when scrolling
+//   New: two plot() lines for top/bottom boundary + fill() between them.
+//   Plots re-scale smoothly with the price axis and follow the candle
+//   visually when you zoom in/out. The fill between the two lines gives
+//   the same visual effect as the old box (teal tinted area).
+//
+//   - plot() renders smoothly and re-scales with chart zoom
+//   - fill() between two plots creates a tinted area without using box.new()
+//   - When consolidation ends, both lines return na, fill disappears
+
+lumRangeTop = isCons and lumConsCount >= 1 ? rangeHigh : na
+lumRangeBot = isCons and lumConsCount >= 1 ? rangeLow  : na
+
+pTop = plot(lumShowBox ? lumRangeTop : na, title="Luminance Range Top", color=color.new(color.teal, 60), linewidth=1, style=plot.style_linebr)
+pBot = plot(lumShowBox ? lumRangeBot : na, title="Luminance Range Bot", color=color.new(color.teal, 60), linewidth=1, style=plot.style_linebr)
+fill(pTop, pBot, color=color.new(color.teal, 90), title="Luminance Range Fill")
 
 // 5c. Swing markers
 //   v6 IMPROVEMENT: use yloc=yloc.abovebar/belowbar so swing markers
