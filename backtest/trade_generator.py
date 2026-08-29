@@ -85,6 +85,24 @@ def generate_trades_from_confluence(
             if scored is None or scored.empty:
                 continue
 
+            # Pre-load MTF data for this pair (load 4H + 1D once)
+            use_mtf = timeframe == "1h"  # only apply MTF when scanning 1H
+            bias_4h_const = 0
+            bias_1d_const = 0
+            if use_mtf:
+                try:
+                    from confluence.mtf import compute_htf_bias
+                    df_4h = cdb.get_candles(pair=symbol, timeframe="4h", limit=200)
+                    if df_4h is not None and len(df_4h) >= 60:
+                        b4 = compute_htf_bias(df_4h, timeframe="4h")
+                        bias_4h_const = b4["bias"]
+                    df_1d = cdb.get_candles(pair=symbol, timeframe="1d", limit=200)
+                    if df_1d is not None and len(df_1d) >= 60:
+                        b1d = compute_htf_bias(df_1d, timeframe="1d")
+                        bias_1d_const = b1d["bias"]
+                except Exception as e:
+                    logger.debug(f"MTF load {symbol}: {e}")
+
             # Walk each bar looking for signals
             for i in range(len(scored) - 1):
                 row = scored.iloc[i]
@@ -102,6 +120,21 @@ def generate_trades_from_confluence(
                     direction = "long" if long_count >= short_count else "short"
                 if direction not in ("long", "short"):
                     continue
+
+                # MTF filter: skip if 4H/1D bias disagrees with 1H signal direction
+                if use_mtf:
+                    # 4H bias must agree OR be neutral
+                    if bias_4h_const != 0 and (
+                        (bias_4h_const == 1 and direction != "long") or
+                        (bias_4h_const == -1 and direction != "short")
+                    ):
+                        continue  # 4H disagrees
+                    # 1D bias must agree OR be neutral (soft check)
+                    if bias_1d_const != 0 and (
+                        (bias_1d_const == 1 and direction != "long") or
+                        (bias_1d_const == -1 and direction != "short")
+                    ):
+                        continue  # 1D disagrees
 
                 # Get entry on next bar open
                 if i + 1 >= len(scored):
