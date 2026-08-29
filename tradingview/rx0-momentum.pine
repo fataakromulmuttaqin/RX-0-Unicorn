@@ -129,16 +129,18 @@ plot(rsiVal, title="RSI (Wilder)", color=isTrending ? color.new(color.teal, 0) :
 plot(adxVal, title="ADX",          color=color.new(color.orange, 30), linewidth=1, style=plot.style_stepline)
 
 // Reference lines
-hline( 100.0, "RSI Top",  color=color.new(color.gray,  80), hline.style_dotted)
-hline( rsiOB, "RSI OB",   color=color.new(color.red,   40), hline.style_dashed)
-hline(  50.0, "Mid",      color=color.new(color.gray,  70), hline.style_dotted)
-hline( rsiOS, "RSI OS",   color=color.new(color.green, 40), hline.style_dashed)
-hline(   0.0, "Zero",     color=color.new(color.gray,  70), hline.style_dotted)
-hline(  -50.0, "",         color=color.new(color.gray,  90), hline.style_dotted)
-hline( -100.0, "Bottom",  color=color.new(color.gray,  80), hline.style_dotted)
-hline( wtOB,  "WT OB",    color=color.new(color.red,   60), hline.style_dashed)
-hline( wtOS,  "WT OS",    color=color.new(color.green, 60), hline.style_dashed)
-hline(adxThresh, "ADX Threshold", color=color.new(color.orange, 50), hline.style_dashed)
+// NOTE: Pine v6 requires named args for all params after the first named one.
+// `linestyle=...` is mandatory (positional no longer accepted after named `color=`).
+hline( 100.0, "RSI Top", color=color.new(color.gray,  80), linestyle=hline.style_dotted)
+hline( rsiOB, "RSI OB",   color=color.new(color.red,   40), linestyle=hline.style_dashed)
+hline(  50.0, "Mid",      color=color.new(color.gray,  70), linestyle=hline.style_dotted)
+hline( rsiOS, "RSI OS",   color=color.new(color.green, 40), linestyle=hline.style_dashed)
+hline(   0.0, "Zero",     color=color.new(color.gray,  70), linestyle=hline.style_dotted)
+hline(  -50.0, "",         color=color.new(color.gray,  90), linestyle=hline.style_dotted)
+hline( -100.0, "Bottom",  color=color.new(color.gray,  80), linestyle=hline.style_dotted)
+hline( wtOB,  "WT OB",    color=color.new(color.red,   60), linestyle=hline.style_dashed)
+hline( wtOS,  "WT OS",    color=color.new(color.green, 60), linestyle=hline.style_dashed)
+hline(adxThresh, "ADX Threshold", color=color.new(color.orange, 50), linestyle=hline.style_dashed)
 
 // =========================================================================
 // 7. BACKGROUND TINT
