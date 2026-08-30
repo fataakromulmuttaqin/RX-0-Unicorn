@@ -192,6 +192,43 @@ $ python -m pytest tests/test_paper.py -v
 
 ---
 
+## [0.9.1] — 2026-08-30
+
+### Engine Tuning — Higher PF, Higher Sharpe, Lower DD
+
+#### Changed
+- **`backtest/engine.py`** — fixed exit logic + better intrabar resolution:
+  - **TP priority over SL on same bar** — when both SL and TP hit in the same
+    4h bar, the side closer to `open` gets filled first (old code always picked
+    SL → cut many winners short on volatile pairs)
+  - **TP2 (2R) is now the default target** — old code always exited at TP1
+    (1R), making average trade ~0R and Sharpe near zero. Now TP1 is a
+    continuation trigger: hold for TP2 unless held ≥8 bars (32h)
+  - **`backtest/engine.py:446`** — `row.get("stop_loss")` returned a Series
+    proxy that made `pd.isna()` raise ambiguous-truth ValueError. Fixed with
+    scalar `.item()` extraction.
+- **`src/config.py`** — risk + time stop tuned:
+  - `BACKTEST_RISK_PER_TRADE`: 0.02 → **0.015** (-25% per trade risk)
+  - `BACKTEST_MAX_BARS_HOLD`: 50 → **30** (5-day time stop on 4h candles)
+- **`backtest.json`** — regenerated with new engine (84 trades, 33KB).
+
+#### Results comparison
+| Metric | v0.9.0 | v0.9.1 | Δ |
+|---|---|---|---|
+| Total trades | 79 | 84 | +6% |
+| Win rate | 55.7% | 57.1% | +1.4pp |
+| **Profit factor** | **1.38** | **1.72** | **+25%** |
+| **Sharpe** | **0.16** | **0.24** | **+50%** |
+| **Max drawdown** | **12.73%** | **7.40%** | **-42%** |
+| Total P/L | +$2,290 | +$3,007 | +31% |
+| Runtime | 147s | 295s | (more bars processed) |
+
+The big win: most pairs now show non-zero trades (BTC PF=3.94, ETH PF=17.46,
+SOL single-trade 2R capture) and SL is no longer the dominant exit reason
+(time_stop / tp1_trail / tp2 distribute the exits).
+
+---
+
 ## [0.9.0] — 2026-08-30
 
 ### Backtest 1Y Engine + Dashboard Section

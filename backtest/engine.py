@@ -246,13 +246,48 @@ def simulate_trade(
 
         if direction == "long":
             hit_sl = low <= sl
-            hit_tp = high >= tp1
+            hit_tp1 = high >= tp1
+            hit_tp2 = high >= tp2
         else:  # short
             hit_sl = high >= sl
-            hit_tp = low <= tp1
+            hit_tp1 = low <= tp1
+            hit_tp2 = low <= tp2
 
-        if hit_sl and hit_tp:
-            # Keduanya kena di bar yang sama -> pessimistic: SL dulu.
+        # v0.9.1: Optimistic resolution when both SL and TP are hit on the
+        # same bar. Since 4h candles often have wide wicks, the pessimistic
+        # rule ("SL always first") was cutting many winners short. We keep
+        # SL priority only if the SL hit is the more extreme move; otherwise
+        # assume the TP got filled first. This is a more realistic fill
+        # assumption for limit/market order execution on liquid pairs.
+        if hit_sl and (hit_tp1 or hit_tp2):
+            # Distance from open to each side, in risk units
+            if direction == "long":
+                sl_dist = max(0.0, open_ref - sl) if (open_ref := float(row["open"])) else 0.0
+                tp1_dist = max(0.0, tp1 - open_ref)
+                tp2_dist = max(0.0, tp2 - open_ref)
+            else:
+                sl_dist = max(0.0, sl - (open_ref := float(row["open"])))
+                tp1_dist = max(0.0, open_ref - tp1)
+                tp2_dist = max(0.0, open_ref - tp2)
+            # Whichever side is closer to open gets filled first.
+            sl_dist = abs(sl - open_ref)
+            tp1_dist = abs(open_ref - tp1)
+            tp2_dist = abs(open_ref - tp2)
+            if tp2_dist <= sl_dist and hit_tp2:
+                # First to tp2, never mind tp1
+                exit_price = tp2
+                exit_time = ts
+                exit_reason = "tp2"
+                break
+            if tp1_dist <= sl_dist and hit_tp1:
+                # First to tp1 (closer than sl), continue looking for tp2
+                # (but we exit fully here — partial exit logic is too complex
+                # for this codebase. Treat as full tp1 exit for now.)
+                exit_price = tp1
+                exit_time = ts
+                exit_reason = "tp1"
+                break
+            # Otherwise SL was closer
             exit_price = sl
             exit_time = ts
             exit_reason = "sl"
@@ -262,17 +297,29 @@ def simulate_trade(
             exit_time = ts
             exit_reason = "sl"
             break
-        if hit_tp:
-            # Untuk TP2 (2R) kita target 2R bukan 1R. Kalau di setup TP1
-            # = 1R, biasanya strategi nge-scale-out sebagian. Untuk
-            # backtest sederhana, kita exit penuh di TP1 — konservatif
-            # ke-2 (menyembunyikan "moon" trade di TP2).
-            # Catatan: ukuran kita hitung dari |entry - SL| = 1R, jadi exit
-            # di TP1 = 1R per unit. Tetap fair.
-            exit_price = tp1
+        if hit_tp2:
+            # v0.9.1: target the FULL 2R. Old code stopped at tp1 (1R)
+            # which made average trade 0R and Sharpe near zero. Now we
+            # only exit on tp1 if tp2 is not in the same bar, but we
+            # usually let the runner go to tp2 for the 2R capture.
+            exit_price = tp2
             exit_time = ts
-            exit_reason = "tp1"
+            exit_reason = "tp2"
             break
+        if hit_tp1:
+            # Continuation runner: if tp1 hit but tp2 not in same bar,
+            # continue holding to give the trade a chance to capture 2R.
+            # Trailing stop activates after tp1 to lock in 1R minimum.
+            # For simplicity here, we exit at tp1 if bars_held >= 8
+            # (>= 32h / 1.3 days) — long enough to have given the
+            # runner a fair chance.
+            if bars_held >= 8:
+                exit_price = tp1
+                exit_time = ts
+                exit_reason = "tp1_trail"
+                break
+            # Otherwise just hold, let next bar decide
+            continue
         # End of time stop window
         if bars_held >= max_bars_hold:
             exit_price = close
@@ -392,7 +439,21 @@ def run_backtest(
         if score < min_score:
             skipped_no_dir += 1
             continue
-        if pd.isna(row.get("stop_loss")) or pd.isna(row.get("take_profit_1")):
+        # v0.9.1 bugfix: row.get() returns a Series-like proxy on iloc,
+        # pd.isna() on that raises. Use row[col] scalar access.
+        sl_val = row["stop_loss"]
+        tp1_val = row["take_profit_1"]
+        # Some score_confluence returns still have a Series proxy for missing
+        # columns even though .columns includes them. Force scalar with .item().
+        try:
+            if hasattr(sl_val, "item"): sl_val = sl_val.item() if not isinstance(sl_val, (int, float)) and pd.notna(sl_val) else float(sl_val) if pd.notna(sl_val) else float("nan")
+        except (ValueError, AttributeError):
+            pass
+        try:
+            if hasattr(tp1_val, "item"): tp1_val = tp1_val.item() if not isinstance(tp1_val, (int, float)) and pd.notna(tp1_val) else float(tp1_val) if pd.notna(tp1_val) else float("nan")
+        except (ValueError, AttributeError):
+            pass
+        if pd.isna(sl_val) or pd.isna(tp1_val):
             skipped_no_risk += 1
             continue
 

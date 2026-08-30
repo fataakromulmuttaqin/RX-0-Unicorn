@@ -112,9 +112,11 @@ SKIP_EMOJI: str = "⚪"
 # Modal awal (USD) dan risk parameter default untuk backtest.
 BACKTEST_DEFAULT_DAYS: int = 90
 BACKTEST_INITIAL_CAPITAL: float = 10_000.0
-BACKTEST_RISK_PER_TRADE: float = 0.02
+BACKTEST_RISK_PER_TRADE: float = 0.015
 # Time stop: berapa bar maksimum hold sebelum force-close.
-BACKTEST_MAX_BARS_HOLD: int = 50
+# v0.9.1: turunkan dari 50 → 30 (~5 hari di 4h). Trade yang tidak bergerak
+# dalam 5 hari adalah noise — modal lebih baik di-redeploy ke setup baru.
+BACKTEST_MAX_BARS_HOLD: int = 30
 # Minimum sample size (jumlah hari data) untuk dianggap layak di-backtest.
 BACKTEST_MIN_SAMPLE_SIZE: int = 30
 # Default directory untuk hasil backtest (JSON, equity chart).
