@@ -1,0 +1,59 @@
+{
+  "generated_at": "2026-08-30T07:05:45.053242+00:00",
+  "is_demo": false,
+  "trades": [
+    {
+      "trade_id": "LINKUSDT-L-20260829T142148-ca2a",
+      "symbol": "LINK/USDT",
+      "side": "long",
+      "grade": "a_plus",
+      "confluence_score": 4,
+      "size_multiplier": 1.5,
+      "signal_source": "scanner",
+      "entry_time": "2026-08-29T14:21:48+00:00",
+      "entry_price": 100.0,
+      "sl": 95.0,
+      "tp1": 110.0,
+      "tp2": 120.0,
+      "risk_usd": 382.1038352210694,
+      "position_size_units": 76.42076704421387,
+      "exit_time": "2026-08-29T14:21:51+00:00",
+      "exit_price": 110.0,
+      "exit_reason": "tp1",
+      "pnl_usd": 764.2076704421388,
+      "r_multiple": 2.0,
+      "status": "closed",
+      "notes": null
+    }
+  ],
+  "scans": [],
+  "state": {
+    "balance": 13501.002177811119,
+    "peak_equity": 13501.002177811119,
+    "initial_balance": 10000.0,
+    "started_at": 1787992046.0,
+    "circuit_until": 0.0,
+    "last_daily_loss": {
+      "date": "2026-08-29",
+      "loss_usd": -199.99999999999997
+    },
+    "K_LAST_DAILY": {
+      "date": "2026-08-29",
+      "loss_usd": 0.0,
+      "trade_count": 0
+    },
+    "last_daily_digest_date": "2026-08-30"
+  },
+  "daily": [
+    {
+      "date": "2026-08-29",
+      "total_equity": 13501.002177811119,
+      "daily_pnl": 764.2076704421388,
+      "trades_count": 1,
+      "wins": 1,
+      "losses": 0,
+      "win_rate": 1.0,
+      "cumulative_pnl": 3501.0021778111186
+    }
+  ]
+}
