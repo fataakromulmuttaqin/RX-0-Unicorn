@@ -278,22 +278,34 @@ class PaperNotifier:
           - 'drawdown_circuit'
           - 'max_open_positions'
           - 'max_daily_trades'
+          - 'correlation_limit'
         """
         details = details or {}
         tier_emoji = _TIER_EMOJI[TIER_RISK]
-        body_lines = [
-            f"{tier_emoji} *RISK ALERT* — Tier 5",
-            f"──────────────────────────",
-            f"⚠️ Type : `{alert_type}`",
-        ]
-        for k, v in details.items():
-            if isinstance(v, float):
-                if "pct" in k.lower() or "drawdown" in k.lower():
-                    body_lines.append(f"   • {k}: `{_fmt_pct(v)}`")
+        # Correlation gets a softer tone (not a breach, just blocked)
+        if alert_type == "correlation_limit":
+            body_lines = [
+                f"{tier_emoji} *CORRELATION GUARD*",
+                f"──────────────────────────",
+                f"🚫 Blocked: `{details.get('symbol', '?')}` (group: `{details.get('group', '?')}`)",
+                f"🔗 Correlated with: {', '.join(details.get('correlated', []))}",
+                f"📏 Max correlated positions: {details.get('max_correlated', 2)}",
+                f"💡 Reason: Diversification — don't stack correlated bets",
+            ]
+        else:
+            body_lines = [
+                f"{tier_emoji} *RISK ALERT* — Tier 5",
+                f"──────────────────────────",
+                f"⚠️ Type : `{alert_type}`",
+            ]
+            for k, v in details.items():
+                if isinstance(v, float):
+                    if "pct" in k.lower() or "drawdown" in k.lower():
+                        body_lines.append(f"   • {k}: `{_fmt_pct(v)}`")
+                    else:
+                        body_lines.append(f"   • {k}: `{v:.4f}`")
                 else:
-                    body_lines.append(f"   • {k}: `{v:.4f}`")
-            else:
-                body_lines.append(f"   • {k}: `{v}`")
+                    body_lines.append(f"   • {k}: `{v}`")
         body_lines.append(f"🕒 {_now_iso()}")
         body = "\n".join(body_lines)
         return self._send(body, tier=TIER_RISK, parse_mode=None)

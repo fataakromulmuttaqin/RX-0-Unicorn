@@ -122,8 +122,8 @@ class PaperTrader:
         if grade == "a_plus":
             size_multiplier = max(size_multiplier, 1.5)
 
-        # Check risk gates
-        allowed, reason = self.portfolio.can_open_new_position()
+        # Check risk gates (pass symbol for correlation check)
+        allowed, reason = self.portfolio.can_open_new_position(symbol=symbol)
         if not allowed:
             logger.info(
                 f"[trader] cannot open {symbol}: {reason} "

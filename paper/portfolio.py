@@ -21,6 +21,7 @@ from typing import Any
 from src.config import (
     PAPER_DAILY_LOSS_LIMIT,
     PAPER_INITIAL_BALANCE,
+    PAPER_MAX_CORRELATED_POSITIONS,
     PAPER_MAX_DAILY_TRADES,
     PAPER_MAX_DRAWDOWN_CIRCUIT,
     PAPER_MAX_OPEN_POSITIONS,
@@ -280,12 +281,14 @@ class PaperPortfolio:
         threshold = -PAPER_DAILY_LOSS_LIMIT * equity
         return pnl <= threshold
 
-    def can_open_new_position(self) -> tuple[bool, str]:
+    def can_open_new_position(
+        self, symbol: str | None = None
+    ) -> tuple[bool, str]:
         """
         Pre-flight check: boleh buka posisi baru hari ini?
         Returns (allowed, reason_if_not).
         Checks: drawdown circuit, daily loss limit, max open positions,
-        max daily trades.
+        max daily trades, correlation limit (if symbol provided).
         """
         if self.is_drawdown_circuit_active():
             return False, "drawdown_circuit_active"
@@ -312,6 +315,52 @@ class PaperPortfolio:
             return False, "max_open_positions_reached"
         if self.journal.count_trades_today() >= PAPER_MAX_DAILY_TRADES:
             return False, "max_daily_trades_reached"
+
+        # Correlation check (only if symbol provided)
+        if symbol is not None and symbol:
+            try:
+                from paper.correlation_guard import (
+                    check_correlation_limit,
+                    get_group,
+                    are_correlated,
+                )
+                open_pos = self.journal.get_open_positions()
+                # Normalize to list of dicts with 'symbol' key
+                open_pos_syms = [
+                    {"symbol": t.get("symbol", "")}
+                    for t in open_pos
+                    if t.get("symbol")
+                ]
+                allowed_corr, reason_corr = check_correlation_limit(
+                    symbol, open_pos_syms, max_correlated=PAPER_MAX_CORRELATED_POSITIONS
+                )
+                if not allowed_corr:
+                    # Tier 5: notify correlation block (best-effort)
+                    if self.notifier is not None:
+                        try:
+                            # Collect correlated symbols for the message
+                            correlated = [
+                                pos["symbol"]
+                                for pos in open_pos_syms
+                                if pos["symbol"] and are_correlated(symbol, pos["symbol"])[0]
+                            ]
+                            self.notifier.notify_risk_breach(
+                                "correlation_limit",
+                                {
+                                    "symbol": symbol,
+                                    "group": get_group(symbol),
+                                    "correlated": correlated,
+                                    "max_correlated": PAPER_MAX_CORRELATED_POSITIONS,
+                                },
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            logger.warning(
+                                f"[portfolio] correlation notify error: {exc}"
+                            )
+                    return False, f"correlation_limit: {reason_corr}"
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"[portfolio] correlation check error: {exc}")
+
         return True, "ok"
 
     # --- Position lifecycle (callable by PaperTrader) ---

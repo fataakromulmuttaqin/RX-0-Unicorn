@@ -145,6 +145,10 @@ PAPER_RISK_PER_TRADE: float = 0.02
 PAPER_MAX_OPEN_POSITIONS: int = 3
 # Batas entry baru per hari (untuk mencegah over-trading).
 PAPER_MAX_DAILY_TRADES: int = 3
+# Max correlated positions (per STRATEGY.md line 162: "Max 2 posisi correlated").
+# If BTC drops 5%, multiple L1-alts drop 8-12% — multiple correlated positions
+# magnify risk, not diversify it. Default 2: e.g. 1 BTC + 1 ETH OK, 3rd L1-alt rejected.
+PAPER_MAX_CORRELATED_POSITIONS: int = 2
 # Daily loss limit (fraksi equity) — kalau tercapai, stop trading untuk hari itu.
 # 5% dari balance awal = $500 di $10k.
 PAPER_DAILY_LOSS_LIMIT: float = 0.05
