@@ -192,6 +192,37 @@ $ python -m pytest tests/test_paper.py -v
 
 ---
 
+## [0.8.0] — 2026-08-30
+
+### Rolling Correlation Guard (Static → Adaptive)
+
+#### Changed
+- **`paper/correlation_guard.py`** — replaced static `_CORRELATION_GROUPS` / `_CROSS_CORRELATIONS` with a rolling Pearson correlation engine driven by `1d` candles from `data/storage/candles.db`.
+  - **Window**: 90 daily candles (~3 months) — enough to span regime shifts without lagging.
+  - **Timeframe**: `1d` (smoothest, regime-stable; 1h was too noisy).
+  - **Threshold**: `|ρ| ≥ 0.70` → correlated group; `ρ ≤ -0.70` → inverse (still counts as risky).
+  - **Algorithm**: greedy single-linkage clustering — a candidate joins the smallest existing group whose ANY member has `|ρ| ≥ 0.70` with it. (Strict transitivity produces too many singletons in crypto where most pairs sit in 0.6-0.9 range.)
+  - **Cache**: in-memory, 5 min TTL (matches the journal-export cron cadence). On every call, if TTL expired, rebuild from candles.db. Single-pass `pd.read_sql_query` + `pivot` + log-returns + `.corr()` — ~1s wall time for 52 pairs.
+  - **Fallback**: if DB missing / <60 aligned candles / any error → static v0.7.0 group map. Correlation guard never breaks the paper monitor.
+  - **Backward compatible**: `get_group`, `are_correlated`, `check_correlation_limit`, `get_correlation_summary` keep the same signatures. New helpers: `get_pair_correlation(s1, s2)`, `refresh_cache()`.
+
+#### Verified
+- **Real-data evidence** (1d, 95 candles aligned, 52 pairs):
+  - BTC-ETH ρ=0.881 → correlated ✓
+  - BTC-TRX ρ=0.515 → **independent** (previously grouped as BTC-correlated by static map — would have killed diversification).
+  - BTC-AXE ρ<0.7 → independent (was l1_majors in static — over-conservative).
+  - ARB-OP ρ=0.681 → grouped via single-linkage path through BTC cluster.
+  - Portfolio of [BTC, ETH, LINK] (3 correlated) → correctly flagged as violation.
+  - Portfolio of [BTC, TRX, ARB] → no violations (TRX is real diversification).
+- **Tests**: `tests/test_correlation_guard.py` rewritten with adaptive assertions that pass in both `rolling` and `static_*` modes. **26/26 passing**. Full suite: **216 passed, 2 skipped** (network tests).
+
+#### Why this matters
+- Static maps freeze regime. In May-Dec 2025 BTC dominance dropped from 56% → 51% and SOL-BTC ρ dropped to ~0.5 — but the v0.7.0 map still treats them as "the same trade" and blocks the diversification.
+- BTC-TRX has long-run ρ≈0.43 — clearly uncorrelated. Static map blocks it; rolling allows it. This is the kind of false-correlation that erodes returns over time.
+- Inversely correlated pairs (ρ<−0.5) like AXS in early 2025 still count as risky for portfolio sizing.
+
+---
+
 ## [0.7.1] — 2026-08-30
 
 ### Journal Export + Web Dashboard Upgrade + Vercel Deploy

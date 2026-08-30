@@ -1,209 +1,294 @@
 """
-Tests for correlation_guard module.
+Tests for correlation_guard module (v0.8.0 rolling correlation engine).
 
 Covers:
-- Group lookups
-- Correlation detection (same group, cross-group, independent)
-- Limit enforcement (max 2 correlated positions)
-- Edge cases (independents, unknown symbols)
+- Static fallback (no DB / insufficient data) uses _STATIC_GROUPS
+- Rolling mode: regime-aware correlation from real candles
+- Group lookup
+- Correlation detection
+- Limit enforcement
+- Cache freshness + refresh
+- Backward compatibility with v0.7.0 callers
+
+Strategy: tests must pass in BOTH modes (rolling OR static). They assert
+on observable behavior (e.g., "BTC correlated with ETH", "limit blocks
+3rd correlated"), not on internal group labels.
 """
 import sys
 from pathlib import Path
 
-# Setup path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+import paper.correlation_guard as cg
 from paper.correlation_guard import (
     get_group,
     are_correlated,
     check_correlation_limit,
     get_correlation_summary,
+    get_pair_correlation,
+    refresh_cache,
+    RHO_THRESHOLD,
 )
 
 
+def _ensure_cache_built():
+    """Refresh cache (or build static fallback) so tests don't depend on TTL."""
+    return refresh_cache()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Group lookup
+# ─────────────────────────────────────────────────────────────────────────────
+
 class TestGetGroup:
-    def test_btc_eth_in_l1_majors(self):
-        assert get_group("BTC/USDT") == "l1_majors"
-        assert get_group("ETH/USDT") == "l1_majors"
-
-    def test_sol_bnb_in_l1_alts(self):
-        assert get_group("SOL/USDT") == "l1_alts"
-        assert get_group("BNB/USDT") == "l1_alts"
-
-    def test_arb_op_in_l2s(self):
-        assert get_group("ARB/USDT") == "l2s"
-        assert get_group("OP/USDT") == "l2s"
-
-    def test_doge_in_memes(self):
-        assert get_group("DOGE/USDT") == "memes"
-        assert get_group("SHIB/USDT") == "memes"
-        assert get_group("PEPE/USDT") == "memes"
-
-    def test_unknown_symbol_independent(self):
-        assert get_group("UNKNOWN/USDT") == "independent"
+    def test_btc_and_eth_share_group_in_both_modes(self):
+        """Both rolling + static put BTC and ETH in the same group."""
+        _ensure_cache_built()
+        # Normalize: any common group is fine; just assert they're equal
+        # AND not "independent" (both modes guarantee they're together).
+        g_btc = get_group("BTC/USDT")
+        g_eth = get_group("ETH/USDT")
+        assert g_btc == g_eth
+        assert g_btc != "independent"
 
     def test_normalize_usdc_to_usdt(self):
-        assert get_group("BTC/USDC") == "l1_majors"
+        _ensure_cache_built()
+        # BTC/USDC should normalize to BTC/USDT for lookup
+        g1 = get_group("BTC/USDC")
+        g2 = get_group("BTC/USDT")
+        assert g1 == g2
 
+    def test_unknown_symbol_independent(self):
+        _ensure_cache_built()
+        assert get_group("UNKNOWN_PAIR_XYZ/USDT") == "independent"
+
+    def test_static_mode_uses_static_groups(self):
+        """When DB is missing, static fallback groups BTC in l1_majors."""
+        # Force static-no-db by pointing at a non-existent path
+        refresh_cache(db_path=Path("/nonexistent/candles.db"))
+        assert get_group("BTC/USDT") == "l1_majors"
+        assert get_group("ETH/USDT") == "l1_majors"
+        assert get_group("SOL/USDT") == "l1_alts"
+        assert get_group("DOGE/USDT") == "memes"
+        assert get_group("UNKNOWN/USDT") == "independent"
+        # Restore normal cache for subsequent tests
+        refresh_cache()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# are_correlated
+# ─────────────────────────────────────────────────────────────────────────────
 
 class TestAreCorrelated:
-    def test_same_group_correlated(self):
-        corr, reason = are_correlated("BTC/USDT", "ETH/USDT")
-        assert corr is True
-        assert "l1_majors" in reason
-
-    def test_l1_alts_same_group(self):
-        corr, reason = are_correlated("SOL/USDT", "AVAX/USDT")
-        assert corr is True
-        assert "l1_alts" in reason
-
-    def test_memes_same_group(self):
-        corr, reason = are_correlated("DOGE/USDT", "SHIB/USDT")
-        assert corr is True
-
-    def test_l2s_same_group(self):
-        corr, reason = are_correlated("ARB/USDT", "OP/USDT")
-        assert corr is True
-
-    def test_btc_l1_alt_cross_correlated(self):
-        # BTC drop affects L1 alts
-        corr, reason = are_correlated("BTC/USDT", "SOL/USDT")
-        assert corr is True
-        assert "cross-group" in reason or "BTC drop" in reason
-
-    def test_defi_unrelated_to_memes(self):
-        corr, reason = are_correlated("UNI/USDT", "DOGE/USDT")
-        # UNI (defi) vs DOGE (memes): cross-group
-        # memes dump when BTC dumps, defi follows BTC/ETH
-        # So UNI and DOGE both correlate to BTC, but NOT to each other
-        # However: defi follows BTC/ETH, memes dump with BTC
-        # These are different paths — they shouldn't be directly correlated
-        # Result: not correlated (good — diversification)
-        assert corr is False
-
-    def test_independent_never_correlated(self):
-        corr, reason = are_correlated("UNKNOWN/USDT", "BTC/USDT")
-        assert corr is False
-
     def test_same_symbol_not_correlated(self):
+        _ensure_cache_built()
         corr, reason = are_correlated("BTC/USDT", "BTC/USDT")
         assert corr is False
+        assert reason == ""
 
+    def test_btc_eth_correlated(self):
+        _ensure_cache_built()
+        # Real 1d data: BTC-ETH ρ ≈ 0.88. Either mode marks them correlated.
+        corr, reason = are_correlated("BTC/USDT", "ETH/USDT")
+        assert corr is True
+        assert reason != ""
+
+    def test_independent_pair_never_correlated(self):
+        _ensure_cache_built()
+        # UNKNOWN_PAIR has no entry in either rolling or static → always
+        # "independent" → never correlated with anyone.
+        corr, reason = are_correlated("UNKNOWN_PAIR/USDT", "BTC/USDT")
+        assert corr is False
+
+    def test_trx_independent_from_btc_on_real_data(self):
+        """Real 1d data shows BTC-TRX ρ ≈ 0.5 — not correlated by threshold."""
+        _ensure_cache_built()
+        rho = get_pair_correlation("BTC/USDT", "TRX/USDT")
+        # If we have rolling data and ρ is computed, assert it's below threshold
+        if rho is not None:
+            assert abs(rho) < RHO_THRESHOLD, (
+                f"BTC-TRX rolling ρ={rho:.3f} unexpectedly ≥ {RHO_THRESHOLD}; "
+                f"regime has shifted — verify manually"
+            )
+            corr, reason = are_correlated("BTC/USDT", "TRX/USDT")
+            assert corr is False
+
+    def test_static_mode_ltc_correlated_with_btc(self):
+        """Static fallback treats BTC, ETH, LTC all as l1_majors → correlated."""
+        refresh_cache(db_path=Path("/nonexistent/candles.db"))
+        corr, reason = are_correlated("BTC/USDT", "LTC/USDT")
+        assert corr is True
+        assert "l1_majors" in reason
+        refresh_cache()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# check_correlation_limit
+# ─────────────────────────────────────────────────────────────────────────────
 
 class TestCheckCorrelationLimit:
     def test_no_open_positions_allowed(self):
+        _ensure_cache_built()
         allowed, reason = check_correlation_limit("BTC/USDT", [])
         assert allowed is True
         assert reason == "no_open_positions"
 
     def test_independent_symbol_always_allowed(self):
+        _ensure_cache_built()
         open_pos = [{"symbol": "BTC/USDT"}, {"symbol": "ETH/USDT"}]
-        allowed, reason = check_correlation_limit("UNKNOWN/USDT", open_pos)
+        allowed, reason = check_correlation_limit("UNKNOWN_PAIR_XYZ/USDT", open_pos)
         assert allowed is True
         assert reason == "independent_symbol"
 
-    def test_one_correlated_allowed(self):
-        open_pos = [{"symbol": "BTC/USDT"}]
-        allowed, reason = check_correlation_limit("ETH/USDT", open_pos)
-        assert allowed is True
-        assert "1 correlated" in reason or "max 2" in reason
-
-    def test_two_correlated_at_limit_blocked(self):
-        # Open: BTC + ETH (both l1_majors, 2 correlated)
-        # Try SOL — cross-group correlation (l1_alts follows l1_majors)
-        # BTC↔SOL correlated + ETH↔SOL correlated = 2 correlated positions
-        # At max=2 → blocked (would be 3rd correlated position)
-        open_pos = [{"symbol": "BTC/USDT"}, {"symbol": "ETH/USDT"}]
-        allowed, reason = check_correlation_limit("SOL/USDT", open_pos)
-        assert allowed is False
-        assert "correlation_limit" in reason
-
-    def test_three_l1_alts_blocked(self):
-        # BTC + SOL open, try to add AVAX (l1_alt) — AVAX is correlated with both
-        open_pos = [{"symbol": "BTC/USDT"}, {"symbol": "SOL/USDT"}]
-        allowed, reason = check_correlation_limit("AVAX/USDT", open_pos)
-        assert allowed is False
-        assert "correlation_limit" in reason
-        assert "AVAX/USDT" in reason
-
-    def test_three_l1_majors_blocked(self):
-        # Try to add a 3rd BTC/ETH/LTC position (all l1_majors)
+    def test_btc_blocks_ltc_when_both_open(self):
+        """Open BTC + ETH (correlated). Adding LTC must be blocked (3rd)."""
+        _ensure_cache_built()
         open_pos = [{"symbol": "BTC/USDT"}, {"symbol": "ETH/USDT"}]
         allowed, reason = check_correlation_limit("LTC/USDT", open_pos)
         assert allowed is False
         assert "correlation_limit" in reason
 
-    def test_mixed_groups_blocked_correctly(self):
-        # 2 memes open (DOGE + SHIB), try to add BONK (3rd meme)
-        open_pos = [{"symbol": "DOGE/USDT"}, {"symbol": "SHIB/USDT"}]
-        allowed, reason = check_correlation_limit("BONK/USDT", open_pos)
-        assert allowed is False
-        assert "memes" in reason
-
-    def test_diversification_allowed(self):
-        # Open: BTC (l1_majors) + DOGE (memes) — 2 correlated (cross-group l1_majors↔memes)
-        # Try to add UNI (defi)
-        # - UNI ↔ BTC: cross-group (l1_majors↔defi) → correlated
-        # - UNI ↔ DOGE: NO direct cross-corr rule between defi and memes
-        # So only 1 correlated (BTC) → allowed
-        open_pos = [
-            {"symbol": "BTC/USDT"},
-            {"symbol": "DOGE/USDT"},
-        ]
-        allowed, reason = check_correlation_limit("UNI/USDT", open_pos)
-        assert allowed is True, f"expected allowed but got: {reason}"
+    def test_btc_allows_trx_on_real_data(self):
+        """Open BTC. TRX should be allowed (independent at ρ≈0.5)."""
+        _ensure_cache_built()
+        rho = get_pair_correlation("BTC/USDT", "TRX/USDT")
+        if rho is not None:
+            allowed, reason = check_correlation_limit("TRX/USDT", [{"symbol": "BTC/USDT"}])
+            # Either allowed (independent) OR blocked (if rolling detected high
+            # correlation due to recent regime shift). Verify the reason
+            # aligns with the actual rolling matrix.
+            if abs(rho) < RHO_THRESHOLD:
+                assert allowed is True, (
+                    f"BTC-TRX ρ={rho:.3f} < threshold but check failed: {reason}"
+                )
+            else:
+                assert allowed is False
 
     def test_max_correlated_param(self):
-        # Test custom max_correlated=1
+        _ensure_cache_built()
         open_pos = [{"symbol": "BTC/USDT"}]
+        # max_correlated=1: any new correlated position is blocked
         allowed, reason = check_correlation_limit("ETH/USDT", open_pos, max_correlated=1)
-        # BTC + ETH both l1_majors, 1 correlated (BTC) → at max
-        # 1 position is at the limit (1 ≥ max_correlated=1) → blocked
+        # BTC and ETH correlated; with max=1, ETH would be 2nd → blocked
         assert allowed is False
+        assert "correlation_limit" in reason
 
+    def test_two_btc_eth_open_blocks_ltc_in_static_mode(self):
+        """In static mode, BTC+ETH+LTC are all l1_majors → adding LTC is 3rd → blocked."""
+        refresh_cache(db_path=Path("/nonexistent/candles.db"))
+        open_pos = [{"symbol": "BTC/USDT"}, {"symbol": "ETH/USDT"}]
+        allowed, reason = check_correlation_limit("LTC/USDT", open_pos)
+        assert allowed is False
+        assert "correlation_limit" in reason
+        refresh_cache()
+
+    def test_known_correlated_returns_2nd_position_allowed(self):
+        """Open 1 correlated. Adding a 2nd correlated is still allowed (max=2)."""
+        _ensure_cache_built()
+        open_pos = [{"symbol": "BTC/USDT"}]
+        # ETH is correlated with BTC → 1st correlated, at limit but allowed
+        allowed, reason = check_correlation_limit("ETH/USDT", open_pos)
+        assert allowed is True
+        assert "1 correlated" in reason
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# get_correlation_summary
+# ─────────────────────────────────────────────────────────────────────────────
 
 class TestGetCorrelationSummary:
     def test_empty_portfolio(self):
+        _ensure_cache_built()
         summary = get_correlation_summary([])
         assert summary["total_positions"] == 0
         assert summary["violations"] == []
 
-    def test_diversified_portfolio(self):
-        # 1 from each group = good
+    def test_diversified_portfolio_no_violations(self):
+        _ensure_cache_built()
+        # BTC, TRX, ARB — at most one correlation each (BTC-TRX=independent on 1d)
         open_pos = [
             {"symbol": "BTC/USDT"},
-            {"symbol": "SOL/USDT"},
+            {"symbol": "TRX/USDT"},
             {"symbol": "ARB/USDT"},
         ]
         summary = get_correlation_summary(open_pos)
         assert summary["total_positions"] == 3
-        assert summary["group_counts"]["l1_majors"] == 1
-        assert summary["group_counts"]["l1_alts"] == 1
-        assert summary["group_counts"]["l2s"] == 1
-        # No group has more than 2 positions
-        assert summary["violations"] == []
+        # No group should have >2 positions
+        assert summary["violations"] == [], f"unexpected violations: {summary['violations']}"
 
-    def test_portfolio_with_violation(self):
-        # 3 L1 majors (BTC, ETH, LTC) — exceeds max 2
-        open_pos = [
-            {"symbol": "BTC/USDT"},
-            {"symbol": "ETH/USDT"},
-            {"symbol": "LTC/USDT"},
-        ]
+    def test_summary_includes_cache_metadata(self):
+        _ensure_cache_built()
+        summary = get_correlation_summary([{"symbol": "BTC/USDT"}])
+        assert "cache_source" in summary
+        assert summary["cache_source"] in ("rolling", "static_insufficient_data",
+                                           "static_no_data", "static_no_db", "static_error")
+        assert "cache_pairs" in summary
+        assert "cache_candles" in summary
+        assert "cache_age_sec" in summary
+
+    def test_summary_groups_have_correct_counts(self):
+        _ensure_cache_built()
+        open_pos = [{"symbol": "BTC/USDT"}, {"symbol": "ETH/USDT"}]
         summary = get_correlation_summary(open_pos)
-        assert len(summary["violations"]) >= 1
-        # Should flag l1_majors with 3 positions
-        assert any("l1_majors" in v for v in summary["violations"])
+        # BTC and ETH must be in the same group (rolling or static)
+        groups = summary["groups"]
+        same_group = [g for g, syms in groups.items() if "BTC/USDT" in syms and "ETH/USDT" in syms]
+        assert len(same_group) == 1, f"Expected BTC+ETH in one group, got groups: {groups}"
+        # The group must contain both
+        assert "BTC/USDT" in groups[same_group[0]]
+        assert "ETH/USDT" in groups[same_group[0]]
 
     def test_includes_independent(self):
-        open_pos = [
-            {"symbol": "BTC/USDT"},
-            {"symbol": "UNKNOWN/USDT"},
-        ]
+        _ensure_cache_built()
+        open_pos = [{"symbol": "BTC/USDT"}, {"symbol": "UNKNOWN_PAIR/USDT"}]
         summary = get_correlation_summary(open_pos)
         assert "independent" in summary["groups"]
         assert summary["group_counts"]["independent"] == 1
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Cache behavior
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestCacheBehavior:
+    def test_refresh_returns_status(self):
+        status = refresh_cache()
+        assert "source" in status
+        assert "pairs" in status
+        assert "candles" in status
+        assert "groups" in status
+        assert isinstance(status["built_at"], float)
+        assert status["built_at"] > 0
+
+    def test_rolling_when_db_has_data(self):
+        status = refresh_cache()
+        # If candles.db exists and has enough aligned daily candles,
+        # source should be "rolling". Otherwise allow static fallback.
+        if status["source"] == "rolling":
+            assert status["pairs"] >= 10  # at least 10 pairs
+            assert status["candles"] >= 60  # at least MIN_CANDLES
+            assert status["groups"] >= 1
+
+    def test_cache_survives_calls(self):
+        """Multiple get_group calls within TTL should not re-query DB."""
+        refresh_cache()
+        before = cg._CACHE.built_at
+        g1 = get_group("BTC/USDT")
+        g2 = get_group("ETH/USDT")
+        after = cg._CACHE.built_at
+        # Same built_at → no rebuild
+        assert before == after
+
+    def test_get_pair_correlation_returns_none_for_unknown(self):
+        _ensure_cache_built()
+        rho = get_pair_correlation("BTC/USDT", "NOT_A_REAL_PAIR/USDT")
+        assert rho is None
+
+    def test_get_pair_correlation_self_is_one(self):
+        _ensure_cache_built()
+        rho = get_pair_correlation("BTC/USDT", "BTC/USDT")
+        assert rho == 1.0
 
 
 if __name__ == "__main__":

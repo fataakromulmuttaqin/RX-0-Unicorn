@@ -159,7 +159,11 @@ Setiap signal HARUS disertai:
 1. **Position sizing:** Risk 1-2% modal per trade
 2. **SL placement:** Beyond structure, bukan angka random
 3. **R:R minimum:** 1:2 (TP minimal 2x SL distance)
-4. **Correlation guard:** Max 2 posisi correlated
+4. **Correlation guard (rolling):** Max 2 posisi correlated
+   - Rolling Pearson ρ dari 90 daily candles (window ~3 bulan) → adaptif ke regime shift
+   - Threshold: |ρ| ≥ 0.70 (1d timeframe). Single-linkage clustering → group terbentuk via chain correlation
+   - Cache 5 menit TTL. Fallback ke static v0.7.0 map kalo DB/ data insufficient
+   - Inversely correlated (ρ ≤ -0.70) tetap dihitung sebagai risky untuk portfolio sizing
 5. **Time stop:** Exit jika tidak bergerak dalam 4 candle
 6. **News filter:** Skip 30 menit sebelum/sesudah red news
 
