@@ -213,8 +213,9 @@ $ python -m pytest tests/test_paper.py -v
   - Tambah relative time ("Diperbarui 5 menit lalu") di header
   - Responsive grid (12→3 cols @ tablet, 2 @ mobile)
 - **Cron job** `d3c7327530ec` — silent `*/5 * * * *` regenerasi `journal.json`, no Telegram notif kecuali error
-- **Vercel deploy** — project `rx0-unicorn-dashboard` (ID `prj_eRO3JZL0MWRCFHENnWDWLfMz7HuN`)
-  - Production URL: **https://rx0-unicorn-dashboard.vercel.app**
+- **Vercel deploy** — project `rx-0-unicorn-dashboard` (ID `prj_eRO3JZL0MWRCFHENnWDWLfMz7HuN`)
+  - Production URL: **https://rx-0-unicorn.vercel.app**
+  - HTML entry: `index.html` (renamed dari `rx0-unicorn.html` biar serve dari root)
   - GitHub integration aktif — push ke `main` auto-deploy
   - SSO protection dimatikan (Teams plan butuh `ssoProtection: null`)
   - Repo `fataakromulmuttaqin/RX-0-Unicorn` linked via API (`POST /v1/projects/{id}/link`)

@@ -1,6 +1,6 @@
 # 🦄 RX-0 Unicorn
 
-**Live Dashboard:** [rx0-unicorn-dashboard.vercel.app](https://rx0-unicorn-dashboard.vercel.app) — paper trading stats auto-refresh tiap 5 menit
+**Live Dashboard:** [rx-0-unicorn.vercel.app](https://rx-0-unicorn.vercel.app) — paper trading stats auto-refresh tiap 5 menit
 
 > **Crypto trading bot bertenaga AI dengan strategi LuxAlgo-grade — dibangun dari nol untuk profit konsisten.**
 
