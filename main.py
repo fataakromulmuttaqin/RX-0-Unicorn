@@ -10,9 +10,14 @@ Subcommands:
     test-alert   Kirim sample alert (placeholder data) untuk verifikasi bot.
     cooldown     Manage alert cooldown table (list/clear/clear-all).
     backtest     Walk-forward backtest + 6 metrics wajib STRATEGY.md (Phase 5).
+    paper        Paper trading dengan notif Telegram 5-tier (Phase 6).
 """
 
 from __future__ import annotations
+
+# CRITICAL: load .env before any module reads TELEGRAM_BOT_TOKEN etc.
+from dotenv import load_dotenv
+load_dotenv()
 
 import argparse
 import json

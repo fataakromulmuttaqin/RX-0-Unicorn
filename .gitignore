@@ -18,10 +18,14 @@ env/
 # Project
 *.db
 *.db-journal
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
 data/storage/*.db
 data/storage/*.db-journal
+data/storage/*.db-shm
+data/storage/*.db-wal
 data/cache/
 data/exports/
 
