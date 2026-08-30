@@ -192,6 +192,30 @@ $ python -m pytest tests/test_paper.py -v
 
 ---
 
+## [0.7.1] — 2026-08-30
+
+### Journal Export + Web Dashboard Upgrade
+
+#### Added
+- **`export_journal.py`** — Export SQLite paper-trades → `journal.json` untuk dashboard
+  - Skema-aware: kolom DB asli (`direction`, `pnl_r_multiple`, `status`) dipetakan ke JSON
+  - Tambahan `state` (balance, initial_balance, peak_equity) & `daily` (per-day PnL aggregate)
+  - Epoch timestamp → ISO 8601 otomatis (auto-detect detik/milidetik)
+  - Default `--db data/storage/paper_trades.db` jadi tinggal `python export_journal.py`
+  - Scan table opsional (silent skip kalau gak ada)
+- **`rx0-unicorn.html`** — Dark cyber dashboard
+  - 12-stat strip: Total Trade, WR, P/L USD, P/L %, Avg R, Max DD, Saldo Saat Ini, Peak Equity, Trade Aktif, Win Terbesar, Loss Terbesar, Profit Factor
+  - **Performa per Symbol** bar chart (auto-sorted by PnL)
+  - **Performa per Grade** cards (A+ / Valid / Skip → WR, P/L, Avg R)
+  - **Daily P/L** 7-hari bars (dari `paper_daily`)
+  - Bug fix: `normResult()` prioritas `status` dari DB
+  - Bug fix: equity chart pakai `state.initial_balance` bukan hardcoded 10000
+  - Tambah relative time ("Diperbarui 5 menit lalu") di header
+  - Responsive grid (12→3 cols @ tablet, 2 @ mobile)
+- **Cron job** `d3c7327530ec` — silent `*/5 * * * *` regenerasi `journal.json`, no Telegram notif kecuali error
+
+---
+
 ## [0.7.0] — 2026-08-30
 
 ### Multi-Timeframe + Correlation Guard + News/Sentiment
