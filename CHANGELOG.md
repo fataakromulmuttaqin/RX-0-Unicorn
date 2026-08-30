@@ -194,7 +194,7 @@ $ python -m pytest tests/test_paper.py -v
 
 ## [0.7.1] — 2026-08-30
 
-### Journal Export + Web Dashboard Upgrade
+### Journal Export + Web Dashboard Upgrade + Vercel Deploy
 
 #### Added
 - **`export_journal.py`** — Export SQLite paper-trades → `journal.json` untuk dashboard
@@ -213,6 +213,11 @@ $ python -m pytest tests/test_paper.py -v
   - Tambah relative time ("Diperbarui 5 menit lalu") di header
   - Responsive grid (12→3 cols @ tablet, 2 @ mobile)
 - **Cron job** `d3c7327530ec` — silent `*/5 * * * *` regenerasi `journal.json`, no Telegram notif kecuali error
+- **Vercel deploy** — project `rx0-unicorn-dashboard` (ID `prj_eRO3JZL0MWRCFHENnWDWLfMz7HuN`)
+  - Production URL: **https://rx0-unicorn-dashboard.vercel.app**
+  - GitHub integration aktif — push ke `main` auto-deploy
+  - SSO protection dimatikan (Teams plan butuh `ssoProtection: null`)
+  - Repo `fataakromulmuttaqin/RX-0-Unicorn` linked via API (`POST /v1/projects/{id}/link`)
 
 ---
 
