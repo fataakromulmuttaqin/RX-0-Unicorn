@@ -97,7 +97,7 @@
 <div class="container">
 
 <h1>🦄 RX-0 Unicorn — Trading Cheat Sheet</h1>
-<div class="subtitle">v1.0 · Pine Script v6 · 4-Indicator Confluence · Crypto Manual Trading</div>
+<div class="subtitle">v0.7.0 · Pine Script v6 · 4-Indicator Confluence · Multi-TF (1D/4H/1H/15m) · Correlation Guard · Crypto Manual Trading</div>
 
 <!-- ============================== -->
 <h2>1. 📊 rx0-momentum.pane (lower)</h2>
@@ -290,10 +290,125 @@
 </div>
 
 <div class="footer">
-  <strong>Quick Commands:</strong> 
-  <code>python main.py scan --timeframe 1h</code> · 
-  <code>python main.py backtest --symbol BTC/USDT --days 90</code> · 
+  <strong>Quick Commands:</strong>
+  <code>python main.py scan --timeframe 1h</code> ·
+  <code>python main.py backtest --symbol BTC/USDT --days 90</code> ·
   <code>python main.py daemon</code> (Telegram alerts)
+</div>
+
+<!-- ============================== -->
+<h2>7. 🏗️ Multi-Timeframe (MTF) — v0.7.0</h2>
+<!-- ============================== -->
+
+<div class="card highlight">
+  <div class="label">Hierarchy: 1D → 4H → 1H → 15m (top filter to entry precision)</div>
+  <div class="pane" style="margin-top:8px">
+    <div class="pane-line"><strong>1D</strong> — EMA 20/50 + market structure → LONG-TERM BIAS (top filter)</div>
+    <div class="pane-line"><strong>4H</strong> — EMA 50/200 + market structure → MEDIUM BIAS</div>
+    <div class="pane-line"><strong>1H</strong> — 4-indicator confluence → SETUP (entry grade)</div>
+    <div class="pane-line"><strong>15m</strong> — EMA 9/21 cross + RSI(7) + volume → ENTRY TIMING</div>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="card">
+    <h3>✅ 3-Way Alignment (1D + 4H + 1H)</h3>
+    <table>
+      <tr><td class="sym">BULL</td><td>BULL</td><td class="sym">LONG</td><td class="value up"><strong>STRONG ALIGNED</strong> (A+ eligible)</td></tr>
+      <tr><td class="sym">BEAR</td><td>BEAR</td><td class="sym">SHORT</td><td class="value up"><strong>STRONG ALIGNED</strong></td></tr>
+      <tr><td class="sym">NEUTRAL</td><td>BULL</td><td class="sym">LONG</td><td class="value neutral"><strong>SOFT ALIGNED</strong> (allowed)</td></tr>
+      <tr><td class="sym">BULL</td><td>BULL</td><td class="sym">SHORT</td><td class="value down"><strong>MTF CONFLICT — SKIP</strong></td></tr>
+      <tr><td class="sym">BEAR</td><td>BULL</td><td class="sym">—</td><td class="value down"><strong>COUNTER-TREND — SKIP</strong></td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3>📊 Bias Strength</h3>
+    <table>
+      <tr><td class="sym">1D+4H</td><td>strong</td><td class="value up">EMA diff &gt; 5% + structure confirmed</td></tr>
+      <tr><td class="sym">4H</td><td>weak</td><td class="value neutral">EMA diff &lt; 3% → only 1H entries, no 15m</td></tr>
+      <tr><td class="sym">All</td><td>neutral</td><td class="value down">No trade</td></tr>
+    </table>
+  </div>
+</div>
+
+<!-- ============================== -->
+<h2>8. 🛡️ Correlation Guard — v0.7.0</h2>
+<!-- ============================== -->
+
+<div class="card highlight">
+  <div class="label">11 Correlation Groups · 17 Cross-Group Rules · Max 2 Correlated Positions</div>
+  <div class="pane" style="margin-top:8px">
+    <div class="pane-line"><strong>l1_majors</strong>  → BTC, ETH, BCH, LTC</div>
+    <div class="pane-line"><strong>l1_alts</strong>    → SOL, BNB, ADA, AVAX, NEAR, ATOM, APT, SUI, TIA</div>
+    <div class="pane-line"><strong>l2s</strong>       → ARB, OP, MATIC, IMX, LDO</div>
+    <div class="pane-line"><strong>defi</strong>      → UNI, AAVE, CRV, SNX, COMP, MKR, DYDX</div>
+    <div class="pane-line"><strong>memes</strong>     → DOGE, SHIB, PEPE, BONK, WIF</div>
+    <div class="pane-line"><strong>ai</strong>        → FET, RNDR, WLD, TAO, AGIX</div>
+    <div class="pane-line"><strong>privacy</strong>   → XMR, ZEC, DASH</div>
+    <div class="pane-line"><strong>gamefi</strong>    → AXS, MANA, SAND, GALA</div>
+    <div class="pane-line"><strong>infra</strong>     → FIL, AR, STORJ, GRT, LINK</div>
+    <div class="pane-line"><strong>rwa</strong>       → ONDO, MATR</div>
+    <div class="pane-line"><strong>exchange</strong>  → OKB, KCS, LEO, CRO</div>
+  </div>
+</div>
+
+<div class="card" style="border-left-color: #ff4757">
+  <h3>🚨 Example: BTC + ETH Open, Try SOL</h3>
+  <table>
+    <tr><td class="sym">BTC</td><td>l1_majors</td><td class="value up">open</td></tr>
+    <tr><td class="sym">ETH</td><td>l1_majors</td><td class="value up">open (2 correlated)</td></tr>
+    <tr><td class="sym">SOL</td><td>l1_alt</td><td class="value down"><strong>BLOCKED</strong> — BTC↔SOL cross-group correlated</td></tr>
+    <tr><td class="sym">ARB</td><td>l2s</td><td class="value down"><strong>BLOCKED</strong> — BTC↔ARB cross-group correlated</td></tr>
+    <tr><td class="sym">DOGE</td><td>memes</td><td class="value down"><strong>BLOCKED</strong> — BTC↔DOGE cross-group correlated</td></tr>
+    <tr><td class="sym">ZRX</td><td>independent</td><td class="value up"><strong>ALLOWED</strong></td></tr>
+  </table>
+</div>
+
+<!-- ============================== -->
+<h2>9. 📰 News & Sentiment (Informational)</h2>
+<!-- ============================== -->
+
+<div class="grid">
+  <div class="card">
+    <h3>📡 News Sources (3 RSS)</h3>
+    <table>
+      <tr><td>CoinDesk</td><td class="value up">outboundfeeds/rss</td></tr>
+      <tr><td>Cointelegraph</td><td class="value up">rss</td></tr>
+      <tr><td>The Block</td><td class="value up">rss.xml</td></tr>
+    </table>
+    <div class="value" style="font-size:11px;color:#6c7a8c;margin-top:8px">
+      Impact: 🔴 high · 🟡 medium · ⚪ low · Currency-tagged
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>💭 Sentiment Sources</h3>
+    <table>
+      <tr><td>CoinGecko</td><td class="value up">price action implied (50 + 2×7d%)</td></tr>
+      <tr><td>Alternative.me</td><td class="value up">Fear &amp; Greed Index (0-100)</td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3>📲 Telegram Commands</h3>
+    <table>
+      <tr><td><code>/rx0 news</code></td><td>top 12 news last 24h</td></tr>
+      <tr><td><code>/rx0 news BTC,ETH</code></td><td>filter by currency</td></tr>
+      <tr><td><code>/rx0 sentiment</code></td><td>market F&amp;G</td></tr>
+      <tr><td><code>/rx0 sentiment BTC/USDT</code></td><td>per-coin sentiment</td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3>⚡ Fetch Strategy</h3>
+    <table>
+      <tr><td>Mode</td><td class="value up">Lazy / on-demand</td></tr>
+      <tr><td>Rate limit</td><td class="value up">10 req/min (sliding window)</td></tr>
+      <tr><td>Cache</td><td class="value up">1H for batch, 30m for news</td></tr>
+      <tr><td>Trade impact</td><td class="value neutral">None — informational only</td></tr>
+    </table>
+  </div>
 </div>
 
 </div>
