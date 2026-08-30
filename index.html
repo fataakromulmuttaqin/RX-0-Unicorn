@@ -1078,6 +1078,81 @@ footer{border-top:1px solid var(--line);padding:56px 0 40px;position:relative;z-
   </div>
 </section>
 
+<section id="backtest-1y">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="section-eyebrow">Backtest 1Y</div>
+      <h2 class="section-title">Hasil Backtest 1 Tahun Terakhir</h2>
+      <p class="section-desc">
+        Replay confluence-scoring terhadap candle 4h dari ~365 hari terakhir untuk
+        <b id="btestPairCount">57</b> pair watchlist, modal awal
+        $<span id="btestInitial">10,000</span>/pair, risk 2% per trade.
+        Update harian via <code style="font-family:var(--font-m);">backtest/run_yearly.py</code>.
+      </p>
+    </div>
+
+    <div class="data-banner live" id="btestBanner">
+      <div class="db-left">
+        <span id="btestDot" class="vs-dot live"></span>
+        <span id="btestStatus">Memuat backtest…</span>
+      </div>
+      <span id="btestUpdated">—</span>
+    </div>
+
+    <div class="jstat-grid" id="btestStatGrid">
+      <div class="jstat"><div class="num" id="bTotalTrades">—</div><div class="lab">Total Trade</div></div>
+      <div class="jstat"><div class="num" id="bWinRate">—</div><div class="lab">Win Rate</div></div>
+      <div class="jstat"><div class="num" id="bProfitFactor">—</div><div class="lab">Profit Factor</div></div>
+      <div class="jstat"><div class="num" id="bSharpe">—</div><div class="lab">Sharpe</div></div>
+      <div class="jstat"><div class="num" id="bMaxDD">—</div><div class="lab">Max DD</div></div>
+      <div class="jstat"><div class="num" id="bTotalPnl">—</div><div class="lab">Total P/L $</div></div>
+    </div>
+
+    <div class="breakdown-grid">
+      <div class="chart-card frame">
+        <div class="chead">
+          <div>
+            <div class="ctitle">Aggregate Equity Curve</div>
+            <div class="csub">Kumulatif P/L seluruh pair, diurutkan berdasarkan exit time tiap trade.</div>
+          </div>
+          <div class="csub" id="bEqRange">—</div>
+        </div>
+        <svg id="btestEquityChart" viewBox="0 0 1000 260" preserveAspectRatio="none"></svg>
+      </div>
+
+      <div class="chart-card frame">
+        <div class="chead">
+          <div>
+            <div class="ctitle">Per-Pair Total P/L</div>
+            <div class="csub">Hijau = profit, merah = rugi. Sorted dari kontributor tertinggi.</div>
+          </div>
+        </div>
+        <div id="btestPairBars"><div class="empty-mini">Belum ada data</div></div>
+      </div>
+    </div>
+
+    <div class="chart-card frame" style="margin-bottom:48px;">
+      <div class="chead">
+        <div>
+          <div class="ctitle">Detail Per-Pair</div>
+          <div class="csub">WR, PF, total P/L per pair. Sorted by P/L descending.</div>
+        </div>
+      </div>
+      <div class="jtable-wrap" style="border:1px solid var(--line);border-radius:4px;background:var(--panel);padding:8px;">
+        <table class="jtable" id="btestPairTable">
+          <thead>
+            <tr>
+              <th>Symbol</th><th>Trades</th><th>Wins</th><th>Losses</th>
+              <th>WR</th><th>PF</th><th>P/L $</th><th>Avg R</th><th>Max DD</th>
+            </tr>
+          </thead>
+          <tbody id="btestPairBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
 <section id="trade-log" style="padding-top:0;">
   <div class="wrap">
     <h3 style="font-family:var(--font-d);font-weight:700;font-size:22px;margin-bottom:20px;">Log Eksekusi Trade</h3>
@@ -1664,6 +1739,170 @@ function renderAll(){
 
 ['fSymbol','fGrade','fResult'].forEach(id=>document.getElementById(id).addEventListener('change', renderTradeTable));
 ['fScanTf','fScanGrade'].forEach(id=>document.getElementById(id).addEventListener('change', renderScanTable));
+
+/* ================= BACKTEST 1Y DASHBOARD ================= */
+let BTEST = null;
+
+function fmtPct(p){ return (p*100).toFixed(1)+'%'; }
+function fmtUSD(n){
+  const sign = n>0?'+':'';
+  return sign + '$' + n.toLocaleString('en-US',{maximumFractionDigits:0});
+}
+function fmtUSD2(n){
+  // For stat cards — show full precision when small
+  const sign = n>0?'+':'';
+  return sign + '$' + Math.round(n).toLocaleString('en-US');
+}
+
+async function loadBacktest(){
+  try{
+    const res = await fetch('backtest.json', {cache:'no-store'});
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    BTEST = await res.json();
+    renderBacktest();
+    setBacktestBanner(false, BTEST.generated_at_iso);
+  }catch(e){
+    setBacktestBanner(true, null);
+    document.getElementById('btestStatus').textContent =
+      'backtest.json belum tersedia — jalankan `python -m backtest.run_yearly`';
+  }
+}
+
+function setBacktestBanner(isDemo, isoTs){
+  const banner = document.getElementById('btestBanner');
+  const dot = document.getElementById('btestDot');
+  const status = document.getElementById('btestStatus');
+  const upd = document.getElementById('btestUpdated');
+  banner.className = 'data-banner ' + (isDemo ? 'demo' : 'live');
+  dot.className = 'vs-dot ' + (isDemo ? 'demo' : 'live');
+  if(isDemo){
+    status.textContent = 'Data backtest belum tersedia';
+    upd.textContent = '—';
+  } else {
+    status.textContent = `Backtest live — ${BTEST.config.pair_count} pairs, ${BTEST.config.days_back}d, ${BTEST.config.timeframe}`;
+    upd.textContent = `Diperbarui ${timeAgo(isoTs)} · ${fmtDateTime(isoTs)}`;
+  }
+}
+
+function renderBacktest(){
+  if(!BTEST) return;
+  const agg = BTEST.aggregate || {};
+  const cfg = BTEST.config || {};
+  const pairs = BTEST.per_pair || [];
+
+  // Stat cards
+  document.getElementById('btestPairCount').textContent = cfg.pair_count ?? pairs.length;
+  document.getElementById('btestInitial').textContent  = (cfg.initial_capital||10000).toLocaleString('en-US');
+
+  const $ = id => document.getElementById(id);
+  const setText = (id, txt, cls) => { const e=$(id); if(e){ e.textContent=txt; if(cls) e.className='num '+cls; } };
+
+  setText('bTotalTrades', agg.total_trades ?? '—');
+  setText('bWinRate', (agg.win_rate!=null?fmtPct(agg.win_rate):'—'));
+  setText('bProfitFactor', (agg.profit_factor!=null?agg.profit_factor.toFixed(2):'—'),
+           agg.profit_factor>=1.5?'pos':(agg.profit_factor<1?'neg':''));
+  setText('bSharpe', (agg.sharpe_ratio!=null?agg.sharpe_ratio.toFixed(2):'—'),
+           agg.sharpe_ratio>=1?'pos':(agg.sharpe_ratio<0?'neg':''));
+  setText('bMaxDD', (agg.max_drawdown_pct!=null?agg.max_drawdown_pct.toFixed(2)+'%':'—'), 'neg');
+  setText('bTotalPnl', (agg.total_pnl!=null?fmtUSD2(agg.total_pnl):'—'),
+           agg.total_pnl>0?'pos':(agg.total_pnl<0?'neg':''));
+
+  // Equity curve
+  drawBtestEquity(agg.aggregate_equity_curve || []);
+
+  // Per-pair bars (top 10 winners + losers)
+  drawBtestPairBars(pairs);
+
+  // Per-pair table
+  drawBtestPairTable(pairs);
+}
+
+function drawBtestEquity(equity){
+  const svg = document.getElementById('btestEquityChart');
+  if(!svg) return;
+  svg.innerHTML = '';
+  if(!equity.length){
+    svg.innerHTML = '<text x="500" y="130" text-anchor="middle" class="eq-axis-label" font-size="13">Belum ada data</text>';
+    document.getElementById('bEqRange').textContent = '—';
+    return;
+  }
+  const W=1000, H=260, PAD=24;
+  const points = equity;
+  const ys = points;
+  const minY = Math.min(...ys, 0);
+  const maxY = Math.max(...ys, 0);
+  const rangeY = (maxY-minY) || 1;
+  const scaleX = i => PAD + (i/(points.length-1)) * (W-PAD*2);
+  const scaleY = y => H-PAD - ((y-minY)/rangeY) * (H-PAD*2);
+
+  let defs = `<defs><linearGradient id="bEqGradient" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="#00e5a0" stop-opacity="0.35"/>
+    <stop offset="100%" stop-color="#00e5a0" stop-opacity="0"/>
+  </linearGradient></defs>`;
+
+  let gridLines = '';
+  for(let i=0;i<=4;i++){
+    const gy = PAD + i*(H-PAD*2)/4;
+    const val = maxY - i*(rangeY)/4;
+    gridLines += `<line x1="${PAD}" y1="${gy}" x2="${W-PAD}" y2="${gy}" class="eq-gridline"/>
+      <text x="${W-PAD+4}" y="${gy+3}" class="eq-axis-label">$${val.toFixed(0)}</text>`;
+  }
+  const linePts = points.map((p,i)=>`${scaleX(i)},${scaleY(p)}`).join(' ');
+  const areaPts = `${PAD},${H-PAD} ${linePts} ${W-PAD},${H-PAD}`;
+  let dots = '';
+  points.forEach((p,i)=>{ dots += `<circle cx="${scaleX(i)}" cy="${scaleY(p)}" r="2" class="eq-dot"/>`; });
+  svg.innerHTML = defs + gridLines +
+    `<polygon points="${areaPts}" class="eq-fill"/>` +
+    `<polyline points="${linePts}" class="eq-line"/>` + dots;
+  document.getElementById('bEqRange').textContent =
+    `$${minY.toLocaleString('en-US',{maximumFractionDigits:0})} — $${maxY.toLocaleString('en-US',{maximumFractionDigits:0})} · ${points.length} trade`;
+}
+
+function drawBtestPairBars(pairs){
+  const wrap = document.getElementById('btestPairBars');
+  if(!wrap) return;
+  if(!pairs.length){ wrap.innerHTML='<div class="empty-mini">Belum ada data</div>'; return; }
+  // Filter ke pairs yang punya minimal 1 trade
+  const active = pairs.filter(p => p.total_trades > 0);
+  if(!active.length){ wrap.innerHTML='<div class="empty-mini">Belum ada pair dengan trade</div>'; return; }
+  const sorted = [...active].sort((a,b) => b.total_pnl - a.total_pnl);
+  const maxAbs = Math.max(...sorted.map(p => Math.abs(p.total_pnl)), 1);
+  wrap.innerHTML = sorted.map(p => {
+    const cls = p.total_pnl >= 0 ? 'pos' : 'neg';
+    const widthPct = Math.max(2, Math.abs(p.total_pnl)/maxAbs * 100);
+    return `<div class="bd-row">
+      <span class="bd-sym">${p.symbol}</span>
+      <div class="bd-bar-wrap"><div class="bd-bar ${cls}" style="width:${widthPct.toFixed(1)}%"></div></div>
+      <span class="bd-pnl ${cls}">${fmtUSD(p.total_pnl)}</span>
+      <span class="bd-count">${p.wins}/${p.total_trades}</span>
+    </div>`;
+  }).join('');
+}
+
+function drawBtestPairTable(pairs){
+  const tbody = document.getElementById('btestPairBody');
+  if(!tbody) return;
+  const active = pairs.filter(p => p.total_trades > 0);
+  const sorted = [...active].sort((a,b) => b.total_pnl - a.total_pnl);
+  tbody.innerHTML = sorted.map(p => {
+    const pnlCls = p.total_pnl > 0 ? 'pos' : (p.total_pnl < 0 ? 'neg' : '');
+    const wrCls  = p.win_rate >= 0.55 ? 'pos' : (p.win_rate < 0.4 ? 'neg' : '');
+    return `<tr>
+      <td class="sym">${p.symbol}</td>
+      <td class="mono-num">${p.total_trades}</td>
+      <td class="mono-num">${p.wins}</td>
+      <td class="mono-num">${p.losses}</td>
+      <td class="mono-num ${wrCls}">${fmtPct(p.win_rate)}</td>
+      <td class="mono-num">${p.profit_factor >= 999 ? '∞' : p.profit_factor.toFixed(2)}</td>
+      <td class="mono-num ${pnlCls}">${fmtUSD(p.total_pnl)}</td>
+      <td class="mono-num">${p.avg_r_multiple.toFixed(2)}R</td>
+      <td class="mono-num">${p.max_drawdown_pct.toFixed(1)}%</td>
+    </tr>`;
+  }).join('');
+}
+
+loadBacktest();
+setInterval(loadBacktest, 600000); // 10 menit — backtest berat, gak perlu sering
 
 loadJournal();
 setInterval(loadJournal, 30000); // auto-refresh tiap 30 detik kalau journal.json berubah

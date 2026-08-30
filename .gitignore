@@ -82,3 +82,9 @@ dist/
 # Committed initial snapshot for Vercel static deploy demo.
 # Live updates require webhook or Vercel KV (out of scope for static site).
 #journal.json
+
+# Backtest 1Y output (auto-regenerated locally by cron, see backtest/run_yearly.py)
+# Committed initial snapshot for Vercel static deploy demo so the Backtest 1Y
+# section on https://rx-0-unicorn.vercel.app/ has data on first load.
+# Live updates would require webhook or Vercel KV (out of scope for static site).
+#backtest.json

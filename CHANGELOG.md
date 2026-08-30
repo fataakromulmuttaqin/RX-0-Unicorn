@@ -192,6 +192,40 @@ $ python -m pytest tests/test_paper.py -v
 
 ---
 
+## [0.9.0] — 2026-08-30
+
+### Backtest 1Y Engine + Dashboard Section
+
+#### Added
+- **`backtest/run_yearly.py`** (490 lines) — pull 1y 4h klines for 57 watchlist pairs
+  from `data-api.binance.vision` (free public API, no key), replay confluence
+  scoring per pair, aggregate portfolio metrics + per-symbol breakdown +
+  aggregate equity curve. Output `backtest.json` (33KB).
+- **`backtest.json`** — initial snapshot at repo root, consumed by dashboard.
+- **Dashboard section "Backtest 1Y"** on `index.html` — 6 stat cards
+  (Total Trade, WR, Profit Factor, Sharpe, Max DD, Total P/L), aggregate
+  equity curve SVG, per-pair horizontal P/L bars, sortable per-pair table
+  (30 pairs with trades out of 57 scanned). All components verified with
+  headless Chrome render test (8/8 checks pass).
+- **Cron `b0e65c17b7a8`** — silent hourly run
+  (`0 * * * *`, workdir=~/RX-0_Unicorn) regenerates `backtest.json`.
+
+#### Results from initial run
+- 57 pairs × 3000 4h candles each (~13 months) in 147s
+- 79 closed trades aggregate, WR=55.7%, Profit Factor=1.38, Sharpe=0.16
+- Max DD=12.73%, total P/L=+$2,290 across $570k simulated capital
+- Top contributors: BTC ($1,000), AVAX ($680), BNB ($479), ARB ($360)
+- Independents: TRX (ρ=0.515, AAVE/BAT ~0.636) — diversification validated
+
+#### Config
+- Timeframe: 4h, window=90d, initial_capital=$10,000/pair, risk=2% per trade
+- Threshold: min_score=2 (A+/Valid grades) — needed because 1d confluence
+  scoring is too smooth (max score 1/4 in 4h history)
+- Fallback: if Binance API unreachable, run falls back to existing
+  `candles_1d` table from `data/storage/candles.db`
+
+---
+
 ## [0.8.0] — 2026-08-30
 
 ### Rolling Correlation Guard (Static → Adaptive)
