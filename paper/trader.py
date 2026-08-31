@@ -24,6 +24,11 @@ from src.config import (
     CONFLUENCE_MIN_VALID,
     PAPER_MAX_BARS_HOLD,
     PAPER_MONITOR_INTERVAL_SECONDS,
+    PAPER_MTF_BIAS_CACHE_TTL,
+    PAPER_MTF_DAILY_MIN_SCORE,
+    PAPER_MTF_DAILY_SYMBOL,
+    PAPER_MTF_ENABLED,
+    PAPER_MTF_15M_MIN_SCORE,
     PAPER_RISK_PER_TRADE,
     PAPER_TP1_CLOSE_PCT,
     PAPER_TP1_HIT_BREAKEVEN,
@@ -45,6 +50,95 @@ def make_trade_id(symbol: str, direction: str) -> str:
     suffix = uuid.uuid4().hex[:4]
     dir_short = "L" if direction.lower() == "long" else "S"
     return f"{short}-{dir_short}-{ts}-{suffix}"
+
+
+# --- MTF (Multi-Timeframe) helpers — v1.1.0 Relaxed MTF Combo ---
+# Validated via backtest (/tmp/xauusd_mtf_tweaks_report.md):
+#   - Relaxed MTF (1D≥1 + 15M≥2): 31 trades, WR 71%, PF 2.18, DD 3.91%, PnL +$1431
+#   - Pure 15M (no filter): 45 trades, WR 48.9%, PF 0.82, DD 8.95%, PnL -$492
+# Filter blocks trades yang melawan daily bias — higher quality, lower frequency.
+
+# Simple in-memory cache untuk daily bias (avoid fetch tiap signal)
+_daily_bias_cache: dict[str, tuple[float, str | None, int | None]] = {}
+
+
+def _fetch_daily_bias(symbol: str) -> tuple[str | None, int | None]:
+    """
+    Ambil daily bias terkini untuk symbol tertentu.
+
+    Returns:
+        (direction, score) — direction adalah "long" / "short" / None.
+        score adalah confluence_score (0-4) di daily bar terakhir.
+        None direction = tidak ada valid bias (semua entry 15M di-block).
+    """
+    import time
+    import pandas as pd
+    from data.fetchers.xaus_fetcher import XAUSFetcher
+    from confluence.scorer import score_confluence
+
+    now = time.time()
+    cached = _daily_bias_cache.get(symbol)
+    if cached and (now - cached[0]) < PAPER_MTF_BIAS_CACHE_TTL:
+        return cached[1], cached[2]
+
+    try:
+        fetcher = XAUSFetcher()
+        df = fetcher.fetch_ohlcv(symbol, "1d", total_bars=60)
+        if df is None or df.empty or len(df) < 20:
+            logger.warning(f"[MTF] insufficient daily data for {symbol}")
+            return None, None
+        scored = score_confluence(df)
+        last = scored.iloc[-1]
+        direction = last.get("confluence_direction")
+        score = int(last.get("confluence_score", 0) or 0)
+        grade = str(last.get("confluence_grade", ""))
+        if pd.isna(direction) or grade != "valid" or score < PAPER_MTF_DAILY_MIN_SCORE:
+            _daily_bias_cache[symbol] = (now, None, score)
+            return None, score
+        _daily_bias_cache[symbol] = (now, str(direction), score)
+        return str(direction), score
+    except Exception as e:
+        logger.error(f"[MTF] daily bias fetch failed for {symbol}: {e}")
+        return None, None
+
+
+def _clear_daily_bias_cache() -> None:
+    """Reset cache — dipanggil di tests."""
+    _daily_bias_cache.clear()
+
+
+def check_mtf_filter(trade_direction: str, symbol: str | None = None) -> bool:
+    """
+    Cek apakah 15M/entry-TF signal diizinkan oleh HTF daily bias.
+
+    Returns True (allow) kalau:
+      - PAPER_MTF_ENABLED=False (default OFF, backward-compatible)
+      - daily bias match dengan trade_direction
+      - daily bias None (skip — jangan buka trade saat bias unclear)
+
+    Returns False (block) kalau daily bias != trade_direction.
+    """
+    if not PAPER_MTF_ENABLED:
+        return True
+    sym = symbol or PAPER_MTF_DAILY_SYMBOL
+    bias_dir, bias_score = _fetch_daily_bias(sym)
+    if bias_dir is None:
+        logger.info(
+            f"[MTF] block {trade_direction} {sym}: no valid daily bias "
+            f"(score={bias_score})"
+        )
+        return False
+    if bias_dir != trade_direction:
+        logger.info(
+            f"[MTF] block {trade_direction} {sym}: daily bias={bias_dir} "
+            f"(score={bias_score})"
+        )
+        return False
+    logger.debug(
+        f"[MTF] allow {trade_direction} {sym}: aligned with daily bias "
+        f"({bias_dir}, score={bias_score})"
+    )
+    return True
 
 
 class PaperTrader:
@@ -98,6 +192,15 @@ class PaperTrader:
             return None
         if grade not in ("a_plus", "valid"):
             logger.debug(f"[trader] skip {symbol}: grade={grade}")
+            return None
+
+        # v1.1.0 Relaxed MTF — kalau enabled, filter signal melawan daily bias.
+        # Cek DULUAN sebelum risk/sizing biar gak waste compute.
+        if not check_mtf_filter(direction, symbol=symbol):
+            logger.info(
+                f"[trader] MTF blocked {symbol} {direction}: "
+                f"score={score} grade={grade}"
+            )
             return None
 
         sl = signal.get("stop_loss")

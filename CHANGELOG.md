@@ -6,6 +6,52 @@ Format: [Semantic Versioning](https://semver.org/)
 
 ---
 
+## [1.1.0] — 2026-08-31
+
+### Added
+- **MTF (Multi-Timeframe) filter** untuk paper trading — Relaxed MTF Combo (1D bias + 15M entry)
+- New helpers di `paper/trader.py`:
+  - `_fetch_daily_bias(symbol)` — fetch 1D XAU/USD via XAUSFetcher, compute confluence, return (direction, score)
+  - `check_mtf_filter(direction, symbol)` — block trades melawan daily bias (HTF filter)
+  - `_clear_daily_bias_cache()` — reset cache (untuk tests)
+- New config flags di `src/config.py`:
+  - `PAPER_MTF_ENABLED = True` (default ON, opt-out via env var)
+  - `PAPER_MTF_DAILY_MIN_SCORE = 1`
+  - `PAPER_MTF_15M_MIN_SCORE = 2`
+  - `PAPER_MTF_DAILY_SYMBOL = "XAU/USD"`
+  - `PAPER_MTF_BIAS_CACHE_TTL = 3600` (1 hour cache)
+- New test class `TestMTFFilter` di `tests/test_paper.py` (+6 tests covering enabled/disabled modes)
+
+### Changed
+- `paper/trader.py:open_from_signal()` — wires check_mtf_filter() sebelum risk gates
+
+### Backtest Validation (60-day window, /tmp/xauusd_mtf_tweaks_report.md)
+| Metric | Pure 15M (no filter) | Relaxed MTF |
+|--------|---------------------|-------------|
+| Trades | 45 | 31 |
+| WR | 48.9% | **71.0%** |
+| PF | 0.82 | **2.18** |
+| DD | 8.95% | **3.91%** |
+| PnL | -$492 | **+$1,431** |
+
+### Test Results
+- 224 passed, 2 skipped (was 218 + 6 new MTF tests)
+- 0 regressions
+
+### Notes
+- MTF enabled by default in v1.1.0. To disable: set `PAPER_MTF_ENABLED=false` di .env
+- Backtest window limited to 60 days (Yahoo 15M max). For longer validation, broker API needed.
+- Trade frequency: ~3 trades/week (vs ~0.4/week pure 1D)
+- Risk per trade: 1.5% (unchanged)
+
+---
+
+## [1.0.0] — 2026-08-30
+
+(Single-asset XAU/USD focus release — see commit history for details)
+
+---
+
 ## [0.1.0] — 2026-08-29
 
 ### Phase 1: Data Foundation

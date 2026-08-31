@@ -203,6 +203,32 @@ PAPER_REPORT_DEFAULT_DAYS: int = int(os.getenv("PAPER_REPORT_DEFAULT_DAYS", "7")
 # Path directory untuk chart output.
 PAPER_REPORTS_DIR: Path = PROJECT_ROOT / "paper" / "reports"
 
+# --- Multi-Timeframe (MTF) Filter for Paper Trading ---
+# Kalau enabled, setiap 15M/entry-TF signal dicek terhadap daily bias.
+# Daily bias direction (long/short) harus match dengan signal direction,
+# else signal di-skip. Validated via backtest: PF 2.18 vs 0.82 baseline.
+PAPER_MTF_ENABLED: bool = os.getenv("PAPER_MTF_ENABLED", "true").lower() == "true"
+# Minimum confluence score di daily bar untuk qualify as valid bias.
+# 1 = accept any non-skip daily grade (validated optimal).
+PAPER_MTF_DAILY_MIN_SCORE: int = int(os.getenv("PAPER_MTF_DAILY_MIN_SCORE", "1"))
+# Minimum confluence score di entry timeframe (15M/1H) untuk trigger entry.
+PAPER_MTF_15M_MIN_SCORE: int = int(os.getenv("PAPER_MTF_15M_MIN_SCORE", "2"))
+# Symbol yang dipakai untuk daily bias lookup. Default XAU/USD sesuai v1.0 pivot.
+PAPER_MTF_DAILY_SYMBOL: str = os.getenv("PAPER_MTF_DAILY_SYMBOL", "XAU/USD")
+# Cache TTL untuk daily bias (detik) — biar gak fetch tiap signal.
+PAPER_MTF_BIAS_CACHE_TTL: int = int(os.getenv("PAPER_MTF_BIAS_CACHE_TTL", "3600"))
+
+# --- Tighter MTF (v1.1.1) — adds 4H layer between 1D and 15M ---
+# Opt-in flag (default OFF). When True, check_tight_mtf_filter replaces
+# check_mtf_filter in PaperTrader.open_from_signal. 4H bias is computed
+# from aggregated Yahoo 1H data (manual 4-bar groupby -> 1 4H bar).
+# Validated backtest (/tmp/xauusd_mtf_tweaks_report.md):
+#   tight_4h: 6 trades, WR 66.7%, PF 2.33, DD 1.92% (best DD), PnL +$264
+PAPER_MTF_TIGHT_ENABLED: bool = os.getenv("PAPER_MTF_TIGHT_ENABLED", "false").lower() == "true"
+# Minimum confluence score on 4H bar to qualify as valid 4H bias.
+# Default 1 (accept any non-skip grade), mirrors PAPER_MTF_DAILY_MIN_SCORE.
+PAPER_MTF_4H_MIN_SCORE: int = int(os.getenv("PAPER_MTF_4H_MIN_SCORE", "1"))
+
 # --- Pass/fail criteria for greenlighting Phase 7 (live trading) ---
 # Threshold ini yang dipakai paper/reporter.py untuk menilai apakah
 # real-time paper performance "cocok" dengan backtest. Definisi:

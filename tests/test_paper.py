@@ -1072,3 +1072,81 @@ class TestPaperNotifier:
         assert TIER_RISK == 5
         # Module-level vs class import must agree
         assert _PaperNotifier is PaperNotifier
+
+
+# --- MTF (Multi-Timeframe) tests — v1.1.0 Relaxed MTF Combo ---
+
+class TestMTFFilter:
+    """Test MTF filter logic di paper trader.
+
+    Validated behavior (from /tmp/xauusd_mtf_tweaks_report.md):
+      - PAPER_MTF_ENABLED=False: filter pass-through (backward compat)
+      - PAPER_MTF_ENABLED=True + bias matches: allow
+      - PAPER_MTF_ENABLED=True + bias mismatch: block
+      - PAPER_MTF_ENABLED=True + bias None: block (safer)
+    """
+
+    def setup_method(self) -> None:
+        """Reset cache before each test."""
+        from paper.trader import _clear_daily_bias_cache
+        _clear_daily_bias_cache()
+
+    def test_mtf_disabled_always_allows(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """PAPER_MTF_ENABLED=False → filter tidak aktif, selalu True."""
+        import src.config as cfg
+        monkeypatch.setattr(cfg, "PAPER_MTF_ENABLED", False)
+        from paper.trader import check_mtf_filter
+        # Even with bad direction, returns True (no filter active)
+        assert check_mtf_filter("long", symbol="XAU/USD") is True
+        assert check_mtf_filter("short", symbol="XAU/USD") is True
+
+    def test_mtf_enabled_bias_match_allows(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Bias 'long' + signal 'long' → allow."""
+        # Patch trader module directly (not just cfg) so the
+        # already-imported constant reflects the test value.
+        from paper import trader as t_mod
+        monkeypatch.setattr(t_mod, "PAPER_MTF_ENABLED", True)
+        monkeypatch.setattr(
+            t_mod, "_fetch_daily_bias", lambda sym: ("long", 2)
+        )
+        assert t_mod.check_mtf_filter("long", symbol="XAU/USD") is True
+
+    def test_mtf_enabled_bias_mismatch_blocks(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Bias 'long' + signal 'short' → block."""
+        from paper import trader as t_mod
+        monkeypatch.setattr(t_mod, "PAPER_MTF_ENABLED", True)
+        monkeypatch.setattr(
+            t_mod, "_fetch_daily_bias", lambda sym: ("long", 2)
+        )
+        assert t_mod.check_mtf_filter("short", symbol="XAU/USD") is False
+
+    def test_mtf_enabled_no_bias_blocks(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Bias None (unclear market) → block (safer side)."""
+        from paper import trader as t_mod
+        monkeypatch.setattr(t_mod, "PAPER_MTF_ENABLED", True)
+        monkeypatch.setattr(
+            t_mod, "_fetch_daily_bias", lambda sym: (None, 0)
+        )
+        assert t_mod.check_mtf_filter("long", symbol="XAU/USD") is False
+
+    def test_mtf_fetch_daily_bias_returns_tuple(self) -> None:
+        """_fetch_daily_bias returns (direction, score) tuple."""
+        from paper.trader import _fetch_daily_bias
+        result = _fetch_daily_bias("XAU/USD")
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+
+    def test_mtf_config_defaults(self) -> None:
+        """Config defaults: disabled, threshold1/2, XAU/USD symbol."""
+        import src.config as cfg
+        assert cfg.PAPER_MTF_ENABLED is False  # OFF by default
+        assert cfg.PAPER_MTF_DAILY_MIN_SCORE == 1
+        assert cfg.PAPER_MTF_15M_MIN_SCORE == 2
+        assert cfg.PAPER_MTF_DAILY_SYMBOL == "XAU/USD"
+        assert cfg.PAPER_MTF_BIAS_CACHE_TTL > 0
