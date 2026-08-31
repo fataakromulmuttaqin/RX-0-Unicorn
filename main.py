@@ -35,6 +35,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from alerts import CooldownManager, TelegramBot, format_signal
 from confluence import GRADE_A_PLUS, GRADE_SKIP, GRADE_VALID, latest_confluence
 from data.fetchers.crypto_fetcher import CryptoFetcher
+from data.fetchers.yahoo_fetcher import YahooFinanceFetcher
 from data.storage.candle_db import CandleDB
 from backtest.data_loader import ensure_data
 from backtest.engine import run_backtest
@@ -58,6 +59,7 @@ from src.config import (
     BACKTEST_OUTPUT_DIR,
     BACKTEST_RISK_PER_TRADE,
     CONFLUENCE_MIN_VALID,
+    DEFAULT_DATA_SOURCE,
     DEFAULT_LIMIT,
     DEFAULT_TIMEFRAME,
     PAPER_INITIAL_BALANCE,
@@ -163,6 +165,7 @@ def cmd_fetch(args: argparse.Namespace) -> int:
     Tarik candle untuk watchlist dan simpan ke DB.
 
     Default: seluruh watchlist, timeframe dari --timeframe, limit dari --limit.
+    Source dipilih via --source {binance,yahoo} (default: DEFAULT_DATA_SOURCE).
     """
     watchlist = load_watchlist()
     symbols = resolve_symbols(watchlist, args.tier)
@@ -171,20 +174,34 @@ def cmd_fetch(args: argparse.Namespace) -> int:
         return 1
     logger.info(
         f"Fetch plan: {len(symbols)} symbols, "
-        f"tf={args.timeframe}, limit={args.limit}"
+        f"tf={args.timeframe}, limit={args.limit}, source={args.source}"
         + (f", tier={args.tier}" if args.tier else ", all tiers")
     )
 
-    fetcher = CryptoFetcher(exchange_id="binance")
+    # v1.0+ pivot: YahooFinanceFetcher is the primary source for XAU/USD.
+    # CryptoFetcher (CCXT Binance) is kept as a fallback for legacy pairs
+    # or power-user --source binance.
     start = time.time()
-    try:
-        results = fetcher.fetch_multiple(
-            symbols=symbols,
-            timeframe=args.timeframe,
-            limit=args.limit,
-        )
-    finally:
-        fetcher.close()
+    if args.source == "yahoo":
+        fetcher = YahooFinanceFetcher()
+        try:
+            results = fetcher.fetch_multiple(
+                symbols=symbols,
+                timeframe=args.timeframe,
+                total_bars=args.limit,
+            )
+        finally:
+            fetcher.close()
+    else:
+        fetcher = CryptoFetcher(exchange_id="binance")
+        try:
+            results = fetcher.fetch_multiple(
+                symbols=symbols,
+                timeframe=args.timeframe,
+                limit=args.limit,
+            )
+        finally:
+            fetcher.close()
 
     inserted_total = 0
     failures: list[str] = []
@@ -308,18 +325,19 @@ def _sample_confluence_result() -> dict:
     """
     Placeholder confluence result untuk test-alert. Tidak bergantung pada
     data pasar — biar user bisa verifikasi bot config sebelum ada data.
+    Since v1.0 pivot to XAU/USD, sample price ~$3450 (typical 2026 gold spot).
     """
     return {
-        "close": 62450.0,
+        "close": 3450.0,
         "regime": "trending",
         "direction": "long",
         "score": 4,
         "grade": GRADE_A_PLUS,
         "size_multiplier": 1.5,
-        "entry_price": 62450.0,
-        "stop_loss": 62180.0,
-        "take_profit_1": 62990.0,
-        "take_profit_2": 63530.0,
+        "entry_price": 3450.0,
+        "stop_loss": 3430.0,
+        "take_profit_1": 3490.0,
+        "take_profit_2": 3550.0,
         "risk_reward": 2.0,
         "signals": {
             "luminance": 1,
@@ -338,8 +356,8 @@ def cmd_test_alert(_args: argparse.Namespace) -> int:
     sample = _sample_confluence_result()
     text = format_signal(
         sample,
-        pair="BTC/USDT",
-        timeframe="1H",
+        pair="XAU/USD",
+        timeframe="1D",
     )
     if text is None:
         logger.error("format_signal returned None (unexpected for A+ sample)")
@@ -794,19 +812,36 @@ def cmd_paper_scan_and_trade(args: argparse.Namespace) -> int:
 
 
 def _make_paper_price_fetcher() -> "callable":
-    """Build a price_fetcher from CCXT Binance."""
-    try:
-        fetcher = CryptoFetcher(exchange_id="binance")
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(f"[paper] cannot init fetcher: {exc}")
-        return lambda _sym: None
+    """
+    Build a price_fetcher for the paper monitor. Since v1.0 pivot, gold
+    is the primary instrument, so we default to YahooFinanceFetcher.fetch_ticker
+    which knows XAU/USD -> GC=F. If a symbol isn't in the Yahoo map, fall
+    back to a CCXT Binance fetcher (best effort).
+    """
+    from data.fetchers.yahoo_fetcher import YAHOO_SYMBOL_MAP
 
-    def _fetch(symbol: str):
+    def _yahoo_fetch(symbol: str) -> float | None:
         try:
+            return YahooFinanceFetcher().fetch_ticker(symbol)
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _ccxt_fetch(symbol: str) -> float | None:
+        try:
+            fetcher = CryptoFetcher(exchange_id="binance")
             t = fetcher.exchange.fetch_ticker(symbol)
             return float(t.get("last") or 0) or None
         except Exception:  # noqa: BLE001
             return None
+
+    def _fetch(symbol: str):
+        norm = symbol.strip().upper()
+        if norm in YAHOO_SYMBOL_MAP or norm in {"GC=F", "EURUSD=X"}:
+            price = _yahoo_fetch(symbol)
+            if price is not None:
+                return price
+            # Fall through to CCXT in case Yahoo is rate-limited.
+        return _ccxt_fetch(symbol)
     return _fetch
 
 
@@ -1095,6 +1130,15 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_LIMIT,
         help=f"Jumlah candle per simbol (default: {DEFAULT_LIMIT}).",
+    )
+    p_fetch.add_argument(
+        "--source",
+        choices=["yahoo", "binance"],
+        default=DEFAULT_DATA_SOURCE,
+        help=(
+            "Sumber data candle. Default: yahoo (XAU/USD via GC=F). "
+            "binance = legacy CCXT Binance crypto (untuk backward compat)."
+        ),
     )
     p_fetch.set_defaults(func=cmd_fetch)
 

@@ -353,22 +353,66 @@ class TestSimulateTrade:
         return pd.DataFrame(rows)
 
     def test_tp1_hit_long(self) -> None:
-        """Bar setelah entry: high >= tp1 -> exit di TP1."""
-        # entry bar open=100, bar 1 high=120 (>>tp1=110) -> hit_tp
+        """Bar setelah entry: high >= tp1 TAPI < tp2 -> exit di TP1 (runner belum trigger).
+
+        v0.9.1 design: kalau bar menyentuh tp2 juga (full 2R tersedia),
+        exit di tp2 — bar ini hanya menyentuh tp1 jadi exit di tp1.
+        Lihat test_tp1_and_tp2_same_bar_long untuk coverage tp2 priority.
+
+        Fixture: TP1 hit pada bar j=14 (bars_held=8) sehingga trail
+        logic di backtest/engine.py line 317 ('if bars_held >= 8: exit tp1_trail')
+        langsung trigger exit di tp1. exit_reason yang di-return engine adalah
+        'tp1_trail' — di STRATEGY.md dan dashboard keduanya diperlakukan sebagai
+        TP1 exit (full 1R capture).
+        """
+        # 14 futures bars; bars 0-7: sideways (no tp), bar 8 (j=14): high=115 hit tp1
+        # future_highs index 0 -> bar j=7 (bars_held=1)
+        # future_highs index 8 -> bar j=15 (bars_held=9)
+        # Wait, entry_bar_idx=6, j ranges 6..19.
+        # j=6 (entry): high=100
+        # j=7..14 (bars_held 1..8): high=105 (no tp)
+        # j=15 (bars_held=9): high=115 (>=tp1=110, <tp2=120) -> bars_held(9)>=8 -> tp1_trail
+        future_highs=[105.0, 105.0, 105.0, 105.0, 105.0, 105.0, 105.0, 105.0, 115.0, 105.0, 105.0, 105.0, 105.0, 105.0]
+        future_lows=[100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0]
+        future_closes=[105.0, 105.0, 105.0, 105.0, 105.0, 105.0, 105.0, 105.0, 110.0, 105.0, 105.0, 105.0, 105.0, 105.0]
+        scored = self._make_scored(
+            n=20, signal_idx=5, direction="long",
+            entry_open=100.0, sl=95.0, tp1=110.0, tp2=120.0,
+            future_highs=future_highs,
+            future_lows=future_lows,
+            future_closes=future_closes,
+        )
+        trade = simulate_trade(scored, signal_idx=5, max_bars_hold=20)
+        assert trade is not None
+        # v0.9.1 trail: exit di tp1 setelah bars_hold >= 8
+        assert trade.exit_reason == "tp1_trail"
+        assert trade.exit_price == pytest.approx(110.0)
+        assert trade.pnl > 0
+        # R-multiple: pnl / risk_dollar. risk = 10000*0.02*1.5 = 300. units = 300/5 = 60. pnl = (110-100)*60 = 600. r = 2.0
+        assert trade.r_multiple == pytest.approx(2.0, rel=1e-6)
+
+    def test_tp1_and_tp2_same_bar_long(self) -> None:
+        """v0.9.1 design: kalau high sentuh tp2 di bar yang sama dengan tp1, exit di tp2 (capture full 2R).
+
+        Engine logic (backtest/engine.py lines 301-308): 'if hit_tp2' check
+        fires BEFORE 'if hit_tp1', jadi runner logic kicks in untuk capture
+        full 2R. Ini berbeda dengan v0.9.0 lama yang exit di tp1 saja.
+        """
+        # entry=100, sl=95, tp1=110, tp2=120. Bar 1 high=120 (sentuh keduanya)
         scored = self._make_scored(
             n=20, signal_idx=5, direction="long",
             entry_open=100.0, sl=95.0, tp1=110.0, tp2=120.0,
             future_highs=[120.0, 105.0, 105.0, 105.0, 105.0, 105.0, 105.0, 105.0, 105.0, 105.0, 105.0, 105.0, 105.0, 105.0],
             future_lows=[100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0],
-            future_closes=[110.0, 105.0, 105.0, 105.0, 105.0, 105.0, 105.0, 105.0, 105.0, 105.0, 105.0, 105.0, 105.0, 105.0],
+            future_closes=[115.0, 105.0, 105.0, 105.0, 105.0, 105.0, 105.0, 105.0, 105.0, 105.0, 105.0, 105.0, 105.0, 105.0],
         )
         trade = simulate_trade(scored, signal_idx=5, max_bars_hold=20)
         assert trade is not None
-        assert trade.exit_reason == "tp1"
-        assert trade.exit_price == pytest.approx(110.0)
-        assert trade.pnl > 0
-        # R-multiple: pnl / risk_dollar. risk = 10000*0.02*1.5 = 300. units = 300/5 = 60. pnl = (110-100)*60 = 600. r = 2.0
-        assert trade.r_multiple == pytest.approx(2.0, rel=1e-6)
+        # v0.9.1: capture full 2R when tp2 hit on same bar as tp1
+        assert trade.exit_reason == "tp2"
+        assert trade.exit_price == pytest.approx(120.0)
+        # pnl = (120-100)*60 = 1200. r = 1200/300 = 4.0
+        assert trade.r_multiple == pytest.approx(4.0, rel=1e-6)
 
     def test_sl_hit_long(self) -> None:
         """Bar setelah entry: low <= sl -> exit di SL."""
@@ -403,23 +447,48 @@ class TestSimulateTrade:
         assert trade.exit_price == pytest.approx(95.0)
 
     def test_short_tp_hit(self) -> None:
-        """Short: low <= tp1 (tanpa hit SL) -> exit di TP1."""
+        """Short: low <= tp1 TAPI > tp2 -> exit di TP1 via trail (bars_held >= 8).
+
+        v0.9.1 design: kalau bar menyentuh tp2 juga, exit di tp2 (capture full 2R).
+        Test ini hanya menyentuh tp1 di bar j=15 (bars_held=9), sehingga trail
+        logic di backtest/engine.py line 317 trigger exit di tp1_trail. Lihat
+        test_short_tp1_and_tp2_same_bar untuk coverage tp2 priority.
+        """
+        # entry_bar_idx=6, j=6..19. bars 0-7 sideways (no tp), bar 8 (j=15):
+        # low=85 (<=tp1=90, >tp2=80) -> tp1_trail
+        future_highs=[95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0]
+        future_lows=[95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 85.0, 90.0, 90.0, 90.0, 90.0, 90.0]
+        future_closes=[95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 88.0, 90.0, 90.0, 90.0, 90.0, 90.0]
         scored = self._make_scored(
             n=20, signal_idx=5, direction="short",
             entry_open=100.0, sl=105.0, tp1=90.0, tp2=80.0,
-            # Bar entry: high=95 (di bawah sl=105, jadi TIDAK hit SL),
-            #            low=80 (di bawah tp1=90 -> hit TP1 untuk short).
-            # Bar setelah entry: kembali ke netral (tidak ada TP/SL kedua).
+            future_highs=future_highs,
+            future_lows=future_lows,
+            future_closes=future_closes,
+        )
+        trade = simulate_trade(scored, signal_idx=5, max_bars_hold=20)
+        assert trade is not None
+        # v0.9.1 trail: exit di tp1 setelah bars_hold >= 8
+        assert trade.exit_reason == "tp1_trail"
+        assert trade.exit_price == pytest.approx(90.0)
+        # Short profit: (100-90)*units > 0
+        assert trade.pnl > 0
+
+    def test_short_tp1_and_tp2_same_bar(self) -> None:
+        """v0.9.1 design: kalau low sentuh tp2 (full 2R) di short, exit di tp2."""
+        scored = self._make_scored(
+            n=20, signal_idx=5, direction="short",
+            entry_open=100.0, sl=105.0, tp1=90.0, tp2=80.0,
+            # Bar 1: low=80 -> sentuh tp1 (90) DAN tp2 (80) di bar yang sama
             future_highs=[95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0],
             future_lows=[80.0, 90.0, 90.0, 90.0, 90.0, 90.0, 90.0, 90.0, 90.0, 90.0, 90.0, 90.0, 90.0, 90.0],
             future_closes=[85.0, 90.0, 90.0, 90.0, 90.0, 90.0, 90.0, 90.0, 90.0, 90.0, 90.0, 90.0, 90.0, 90.0],
         )
         trade = simulate_trade(scored, signal_idx=5, max_bars_hold=20)
         assert trade is not None
-        assert trade.exit_reason == "tp1"
-        assert trade.exit_price == pytest.approx(90.0)
-        # Short profit: (100-90)*units > 0
-        assert trade.pnl > 0
+        # v0.9.1: capture full 2R when tp2 hit on same bar
+        assert trade.exit_reason == "tp2"
+        assert trade.exit_price == pytest.approx(80.0)
 
     def test_time_stop(self) -> None:
         """max_bars_hold=3, no SL/TP hit -> exit at close after 3 bars."""

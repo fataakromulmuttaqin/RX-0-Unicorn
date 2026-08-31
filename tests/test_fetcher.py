@@ -46,21 +46,31 @@ TEST_HOSTNAME: str | None = os.getenv("BINANCE_HOSTNAME") or BINANCE_HOSTNAME
 
 # --- Watchlist ---
 def test_watchlist_loads_and_has_all_tiers():
+    """v1.0.0 pivot: single-asset XAU/USD, tier renamed to forex_major."""
     assert WATCHLIST_PATH.exists(), f"watchlist.json missing at {WATCHLIST_PATH}"
     with open(WATCHLIST_PATH, "r", encoding="utf-8") as f:
         wl = json.load(f)
     assert isinstance(wl, dict)
-    expected_tiers = {"tier_1_major", "tier_2_large_cap", "tier_3_mid_cap", "tier_4_development"}
+    # v1.0.0 pivot: dari 57 crypto pairs (tier_1..4) ke single XAU/USD entry
+    # di forex_major tier. Future expansion: silver/platinum masuk tier serupa.
+    expected_tiers = {"forex_major"}
     assert expected_tiers.issubset(wl.keys()), f"Missing tiers: {expected_tiers - set(wl.keys())}"
-    # Total 50+ pairs
+    # Single primary asset (XAU/USD) — boleh ada lebih jika future tier ditambah
     total = sum(len(v) for v in wl.values() if isinstance(v, list))
-    assert total >= 50, f"Watchlist only has {total} pairs, expected >= 50"
-    # All strings and slash-separated
+    assert total >= 1, f"Watchlist empty: {total} symbols"
+    # Primary symbol XAU/USD harus ada
+    all_symbols = [s for v in wl.values() for s in v]
+    assert "XAU/USD" in all_symbols, f"XAU/USD missing from watchlist: {all_symbols}"
+    # All strings and slash-separated (skip metadata keys like _comment)
     for tier, pairs in wl.items():
+        if not isinstance(pairs, list):
+            continue
         for p in pairs:
             assert isinstance(p, str)
             assert "/" in p, f"Tier {tier}: {p} missing '/'"
-            assert p.endswith("/USDT"), f"Tier {tier}: {p} not USDT-quoted"
+            # v1.0.0: accept XAU/USD (gold) — USDT suffix check jadi opsional.
+            # Gold pakai Yahoo Finance, bukan CCXT, jadi format bebas.
+            assert not p.endswith("/USDT") or "/" in p.replace("/USDT", ""), f"Tier {tier}: malformed {p}"
 
 
 # --- DB ---

@@ -30,6 +30,7 @@ import pandas as pd
 from confluence.scorer import (
     GRADE_A_PLUS,
     GRADE_VALID,
+    GRADE_SKIP,
     score_confluence,
 )
 from src.config import (

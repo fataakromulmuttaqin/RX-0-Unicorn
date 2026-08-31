@@ -35,6 +35,156 @@ def _ccxt_to_ohlcv(ccxt_data: list) -> list[tuple]:
     return [(int(c[0]), float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[5])) for c in ccxt_data]
 
 
+# ── v0.9.2: CCXT paginated fetcher (multi-exchange, rate-limit aware) ──────
+# Used by backtest/run_yearly.py for 1y historical candles. Supports all
+# major exchanges via ccxt. Pagination is required because most exchanges
+# cap a single fetch_ohlcv() at 1000-1500 bars.
+
+# Map our timeframe strings to ccxt format. ccxt accepts both "4h" and
+# "1h" natively for most exchanges, so this is a passthrough.
+_CCXT_TF_MAP = {
+    "1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m",
+    "1h": "1h", "4h": "4h", "1d": "1d",
+}
+
+# Symbol normalization per exchange.
+def _to_ccxt_symbol(symbol: str, exchange: str) -> str:
+    """Convert 'BTC/USDT' to exchange's native format."""
+    base, quote = symbol.split("/")
+    if exchange in ("binance", "bybit", "okx"):
+        # Most use 'BTC/USDT' directly with ccxt
+        return f"{base}/{quote}"
+    elif exchange in ("gate", "gateio"):
+        return f"{base}_{quote}"
+    elif exchange in ("htx", "huobi"):
+        return f"{base}/{quote}"
+    elif exchange == "kucoin":
+        return f"{base}-{quote}"
+    return f"{base}/{quote}"
+
+
+def _make_ccxt_exchange(exchange: str):
+    """Lazy-create a ccxt exchange instance with sensible rate-limit defaults."""
+    import ccxt
+    klass = getattr(ccxt, exchange, None)
+    if klass is None:
+        raise ValueError(f"Unknown exchange '{exchange}'. Available: binance, bybit, okx, gate, htx, kucoin")
+    return klass({
+        "enableRateLimit": True,
+        "rateLimit": 200,  # ms between calls — more aggressive than ccxt default 1000
+        "timeout": 20000,
+    })
+
+
+def fetch_ohlcv_ccxt(
+    symbol: str,
+    timeframe: str = "4h",
+    total_bars: int = 2200,
+    exchange: str = "binance",
+    verbose: bool = False,
+) -> list[tuple] | None:
+    """
+    Fetch historical OHLCV via CCXT with automatic pagination.
+
+    Most exchanges cap a single fetch_ohlcv() at 1000-1500 bars. To get 1y
+    of 4h data (~2200 bars), we paginate by walking backward in time using
+    the `since` parameter until we have enough bars.
+
+    Args:
+        symbol: 'BTC/USDT' format
+        timeframe: '1m', '5m', '15m', '1h', '4h', '1d' (ccxt-compatible)
+        total_bars: target number of bars to return
+        exchange: ccxt exchange id (binance, bybit, okx, gate, htx, kucoin)
+        verbose: print pagination progress
+
+    Returns:
+        List of (timestamp_ms, open, high, low, close, volume) tuples,
+        sorted ascending. Returns None if all pages fail.
+    """
+    ccxt_tf = _CCXT_TF_MAP.get(timeframe, timeframe)
+    ccxt_sym = _to_ccxt_symbol(symbol, exchange)
+
+    try:
+        ex = _make_ccxt_exchange(exchange)
+    except Exception as e:
+        if verbose:
+            print(f"  [ccxt-{exchange}] init error: {e}")
+        return None
+
+    all_candles: list[list] = []
+    # Most exchanges have a per-call limit of 1000-1500. We use 1000 to be safe.
+    per_call = 1000
+    end_ts_ms: int | None = None  # None = "give me the most recent"
+    page = 0
+    max_pages = (total_bars // per_call) + 3  # safety margin
+
+    while len(all_candles) < total_bars and page < max_pages:
+        try:
+            params = {}
+            if end_ts_ms is not None:
+                # `since` is the START of the window we want. To paginate
+                # backward, ask for bars before our current earliest.
+                # We subtract 1ms so we don't re-fetch the same bar.
+                params["since"] = end_ts_ms - 1
+            candles = ex.fetch_ohlcv(ccxt_sym, ccxt_tf, limit=per_call, params=params)
+        except Exception as e:
+            if verbose:
+                print(f"  [ccxt-{exchange}] page {page} error: {e}")
+            break
+        if not candles:
+            break
+        if end_ts_ms is not None:
+            # The exchange gave us a window ending at end_ts_ms-1.
+            # New end_ts is the first candle's timestamp.
+            end_ts_ms = int(candles[0][0])
+        else:
+            # First call: walk backward from the most recent candle.
+            end_ts_ms = int(candles[0][0])
+        # Prepend (we're walking backward in time).
+        all_candles = candles + all_candles
+        page += 1
+        if verbose:
+            print(f"  [ccxt-{exchange}] page {page}: got {len(candles)} bars, total {len(all_candles)}/{total_bars}")
+        if len(candles) < per_call:
+            # Exchange has no more history for this symbol.
+            break
+
+    if not all_candles:
+        return None
+    # Take only the most-recent `total_bars`.
+    all_candles = all_candles[-total_bars:]
+    return _ccxt_to_ohlcv(all_candles)
+
+
+def fetch_ohlcv_multi_paginated(
+    symbol: str,
+    timeframe: str = "4h",
+    total_bars: int = 2200,
+    preferred: str = "binance",
+    verbose: bool = False,
+) -> tuple[list[tuple] | None, str]:
+    """
+    Try CCXT paginated fetch across multiple exchanges in priority order.
+
+    Returns (data, source_exchange). source_exchange is the ccxt id of the
+    exchange that succeeded, or '' if all failed.
+
+    Note: some regions / server IPs can't reach Binance/Bybit/OKX directly
+    (geo-block or SSL hostname mismatch). We try preferred first, then fall
+    through the list — Gate.io is usually reachable from anywhere and has
+    the same 4h candles.
+    """
+    order = [preferred] + [k for k in ("binance", "bybit", "okx", "gate", "kucoin", "htx") if k != preferred]
+    last_err = ""
+    for ex_id in order:
+        data = fetch_ohlcv_ccxt(symbol, timeframe, total_bars, exchange=ex_id, verbose=verbose)
+        if data and len(data) > 0:
+            if verbose and ex_id != preferred:
+                print(f"  [fallback] using {ex_id} (preferred {preferred} failed)")
+            return data, ex_id
+    return None, ""
+
+
 def _fetch_binance_data_api(symbol: str, interval: str = "1h", limit: int = 200) -> list[tuple] | None:
     """
     PRIMARY: Fetch from data-api.binance.vision (Binance's public data API).

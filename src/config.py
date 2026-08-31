@@ -27,13 +27,23 @@ PAPER_DB_PATH: Path = STORAGE_DIR / "paper_trades.db"
 WATCHLIST_PATH: Path = PAIRS_DIR / "watchlist.json"
 
 # --- Exchange ---
-EXCHANGE_ID: str = "binance"
+# Default exchange identifier. Since the v1.0 pivot to XAU/USD, the primary
+# data source is Yahoo Finance (no exchange concept), but we keep this for
+# CCXT-based legacy fetchers (CryptoFetcher, MultiExchangeFetcher) and for
+# optional cross-asset scans. Set via env EXCHANGE_ID for power-users.
+EXCHANGE_ID: str = os.getenv("EXCHANGE_ID", "binance")
 EXCHANGE_NAME: str = "Binance"
 # Hostname alternatif — beberapa region/jaringan mem-blokir api.binance.com.
 # CCXT 'binance' menerima override 'hostname' / 'urls.api'. Default None
 # (pakai host CCXT). Set via env BINANCE_HOSTNAME atau langsung di CryptoFetcher.
 # Contoh nilai: "data-api.binance.vision"
 BINANCE_HOSTNAME: str | None = os.getenv("BINANCE_HOSTNAME") or None
+
+# --- Data source selector (v1.0+ gold pivot) ---
+# Default source for fetch operations. "yahoo" -> YahooFinanceFetcher (primary
+# for XAU/USD); "binance"/"ccxt" -> legacy CryptoFetcher/MultiExchangeFetcher.
+# Set via env DATA_SOURCE for power-users.
+DEFAULT_DATA_SOURCE: str = os.getenv("DATA_SOURCE", "yahoo")
 
 # --- Timeframes ---
 # Tuple of (ccxt_id, display_name, seconds)
@@ -58,7 +68,13 @@ INTRADAY_RETENTION_DAYS: int = 90
 DAILY_RETENTION_DAYS: int = 999999  # keep daily forever (effectively)
 
 # --- Watchlist tiers ---
+# v1.0 gold pivot: single tier ("forex_major") holding the one symbol we
+# care about. The 57-pair crypto roster (tier_1_major ... tier_4_development)
+# from 0.9.x is retained as a commented reference so legacy CLI flags
+# like --tier tier_1_major still resolve to "no pairs" instead of crashing.
 WATCHLIST_TIERS: tuple[str, ...] = (
+    "forex_major",
+    # legacy tiers from 0.9.x — kept for forward compatibility of CLI args
     "tier_1_major",
     "tier_2_large_cap",
     "tier_3_mid_cap",
@@ -66,7 +82,12 @@ WATCHLIST_TIERS: tuple[str, ...] = (
 )
 
 # --- Default CLI values ---
-DEFAULT_TIMEFRAME: str = "1h"
+# v1.0 pivot: 1d is the default timeframe for XAU/USD (gold moves ~1-2%/day,
+# so 1d bars give confluence enough samples without over-fitting). 4h is a
+# valid alternative via the Yahoo 1h-resample path in YahooFinanceFetcher.
+# 1h is no longer the default because gold 1h bars are noisier and Yahoo's
+# 1h history is capped at 730d anyway.
+DEFAULT_TIMEFRAME: str = "1d"
 DEFAULT_LIMIT: int = 500
 
 # --- Confluence Scorer (Phase 3) ---
@@ -141,9 +162,13 @@ PAPER_MODE: bool = os.getenv("PAPER_MODE", "true").lower() == "true"
 # Modal awal paper portfolio (USD). Dipakai oleh PaperPortfolio.start().
 PAPER_INITIAL_BALANCE: float = 10_000.0
 # Risk per trade (fraksi equity) — dipakai untuk position sizing.
-# Default 2% sama dengan backtest default untuk apples-to-apples compare.
-PAPER_RISK_PER_TRADE: float = 0.02
-# Batas posisi terbuka simultan (max 3 pairs aktif bersamaan).
+# v1.0 pivot: turun dari 0.02 -> 0.015. Gold daily vol ~1-2% (vs BTC ~3-7%),
+# so a 1.5% risk budget keeps expected max drawdown in line with the
+# 0.9.x BTC numbers. Pair this with ATR-based SL/TP (sl_dist in
+# PaperTrader.open_from_signal()) rather than fixed %.
+PAPER_RISK_PER_TRADE: float = float(os.getenv("PAPER_RISK_PER_TRADE", "0.015"))
+# Batas posisi terbuka simultan. Tetap 3 untuk future-proof: kalau nanti
+# ada pairs kedua (mis. EUR/USD, XAG/USD) kita tidak perlu ubah config.
 PAPER_MAX_OPEN_POSITIONS: int = 3
 # Batas entry baru per hari (untuk mencegah over-trading).
 PAPER_MAX_DAILY_TRADES: int = 3

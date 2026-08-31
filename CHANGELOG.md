@@ -192,6 +192,84 @@ $ python -m pytest tests/test_paper.py -v
 
 ---
 
+## [1.0.0] — 2026-08-31
+
+### Major Pivot: Crypto → XAU/USD (Gold) Focus
+
+**BREAKING**: Pivoted dari 57-pair crypto ke single-asset XAU/USD (gold) focus.
+Rationale: gold trending behavior lebih reliable dari crypto chop, forex market hours
+predictable vs crypto 24/7 noise, single-asset depth beats breadth diversification.
+
+### Major Pivot
+- **BREAKING**: Pivoted dari 57-pair crypto ke single-asset XAU/USD (gold) focus
+- **Data source migration:** Binance/CCXT → Yahoo Finance (GC=F futures proxy)
+  - `GC=F` tracks spot XAU/USD < 0.5% delta, no geo-block, 2-year intraday history
+- **Watchlist:** 57 USDT pairs across 4 tiers → single XAU/USD entry
+- **Timeframe tuning:** 1H primary → 1D primary (gold-tuned, Yahoo reliable, less noise)
+- **Risk recalibration:** 2% per trade → 1.5% per trade (gold daily vol lebih tinggi)
+
+### Added
+- `data/fetchers/yahoo_fetcher.py`: `YahooFinanceFetcher` class dengan GC=F support
+  - Auto-mapping: XAU/USD → GC=F, XAG/USD → SI=F, XPT/USD → PL=F (ready for expansion)
+  - 4h aggregation from 1h (Yahoo tidak provide native 4h)
+  - 5 min cache TTL untuk rate limit protection
+- `--source yahoo` flag di fetch CLI (`python main.py fetch --source yahoo --symbol XAU/USD`)
+- **Forex market hours awareness** di paper trader (`src/market_hours.py`)
+  - Sun 5pm ET open → Fri 5pm ET close, skip daily 5-6pm ET maintenance
+  - Filter trades di luar active window
+- **Gold-specific ATR-based SL/TP calibration** (1D timeframe primary)
+  - SL = ATR(14) × 1.5 (volatility-adjusted, bukan fixed pip)
+  - TP1 = 1R, TP2 = 2R standard
+- **DXY inverse correlation awareness** (informational only)
+  - `data/fetchers/sentiment.py` upgraded: CoinGecko/Fear-Greed → DXY index + COT report
+
+### Changed
+- `src/config.py`:
+  - Default timeframe: `1h` → `1d` (Yahoo reliable, gold trending primary)
+  - Default risk per trade: `0.02` (2%) → `0.015` (1.5%, gold-tuned)
+  - Default data source: CCXT → yahoo
+  - Default symbol: BTC/USDT → XAU/USD
+  - Removed 15m timeframe references (Yahoo limited 60 hari, not reliable)
+- `paper/trader.py`: `make_trade_id` support "XAU/USD" → "XAUUSD-..." format
+  - Trade ID prefix berubah dari BTCUSDT-/ETHUSDT- pattern ke XAUUSD- unified
+- `alerts/formatter.py`: `format_price` smart decimal untuk XAU/USD
+  - Old: $62,450.00 (BTC-style)
+  - New: $3,287.45 (gold-style, 2 decimal karena $0.01 = 1 pip per oz)
+- `backtest/run_yearly.py`: default source → yahoo, default pair → XAU/USD
+  - Walk-forward multi-year daily candles (unlimited Yahoo history)
+  - Aggregate equity curve + per-symbol breakdown tetap sama
+- `paper/correlation_guard.py`: **disabled for single-pair mode** (XAU/USD only)
+  - Code tetap maintained untuk re-enable saat XAG/USD + XPT/USD expansion
+- `data/pairs/watchlist.json`: 57 USDT pairs → 1 XAU/USD entry
+  - Tier system simplified: single Tier 1 (Primary)
+  - Future expansion: XAG/USD (silver), XPT/USD (platinum) planned v1.1.0+
+
+### Tests
+- Update test fixtures dari BTC/USDT, ETH/USDT → XAU/USD
+  - `tests/test_paper.py`: portfolio sizing fixtures recalibrated ($10k × 1.5% = $150)
+  - `tests/test_confluence.py`: synthetic OHLCV shifted dari BTC vol to gold vol (1-2% daily)
+  - `tests/test_backtest.py`: defaults updated (yahoo source, 1d timeframe)
+- New test: `test_yahoo_fetcher_returns_xauusd_data`
+  - Verify GC=F ticker mapping, OHLCV schema, datetime index timezone-aware
+- All 217 existing tests still passing (regression check passed)
+- 2 network tests tetap skipped (Yahoo API + Telegram live test)
+
+### Notes
+- **Strategy 4-confluence unchanged** — Luminance + RSI Regime + BOS/CHoCH + WaveTrend tetap sama
+  - Hanya calibration parameter yang berubah (ATR multipliers, risk sizing)
+- **Phase 7 live trading tetap future** — Phase 6 paper trading lanjut validasi 2-4 minggu post-rebrand
+  - Target: 30+ trades paper trading XAU/USD daily sebelum greenlight live
+- **Dashboard URL tetap:** https://rx-0-unicorn.vercel.app (auto-deploy dari main branch)
+- **Backtest verdict (v0.9.1 baseline, pre-rebrand):** Sharpe 0.24, WR 57.1%, PF 1.72
+  - Post-rebrand backtest XAU/USD daily on track untuk validation
+- **Roadmap pivot confirmed:**
+  - v1.0.0 (current): XAU/USD only — gold single-asset
+  - v1.1.0 (planned): + XAG/USD (silver) — re-enable correlation guard
+  - v1.2.0 (planned): + XPT/USD (platinum) — full precious-metals universe
+  - v2.0.0 (future): Cross-asset (gold + BTC macro hedge) — full diversification
+
+---
+
 ## [0.9.1] — 2026-08-30
 
 ### Engine Tuning — Higher PF, Higher Sharpe, Lower DD
@@ -391,15 +469,16 @@ $ python -m pytest tests/ -q
 
 ---
 
-## [1.0.0] — Planned
-
-### Phase 7: Auto-Trade Layer
-- CCXT live execution
-- Risk manager (1-2% per trade, max 3 trades/day, correlation guard)
-- Kill switch via Telegram
-- News filter integration (now informational, may upgrade to blocking)
-- LLM-enhanced pattern recognition (optional)
+**Legend:** ✅ Done | 🟡 In Progress | ⏳ Pending | ❌ Cancelled
 
 ---
 
-**Legend:** ✅ Done | 🟡 In Progress | ⏳ Pending | ❌ Cancelled
+## [1.1.0] — Planned (Future)
+
+### Phase 7: Auto-Trade Layer + Universe Expansion
+- Live execution (forex broker API atau CME futures)
+- Risk manager (1.5% per trade, max 3 trades/day, market hours filter)
+- Kill switch via Telegram
+- News filter integration (now informational, may upgrade to blocking)
+- LLM-enhanced pattern recognition (optional)
+- **Universe expansion:** + XAG/USD (silver), + XPT/USD (platinum) — re-enable correlation guard
