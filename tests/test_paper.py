@@ -1093,12 +1093,27 @@ class TestMTFFilter:
 
     def test_mtf_disabled_always_allows(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """PAPER_MTF_ENABLED=False → filter tidak aktif, selalu True."""
-        import src.config as cfg
-        monkeypatch.setattr(cfg, "PAPER_MTF_ENABLED", False)
+        from paper import trader as t_mod
+        monkeypatch.setattr(t_mod, "PAPER_MTF_ENABLED", False)
         from paper.trader import check_mtf_filter
         # Even with bad direction, returns True (no filter active)
         assert check_mtf_filter("long", symbol="XAU/USD") is True
         assert check_mtf_filter("short", symbol="XAU/USD") is True
+
+    def test_mtf_other_symbol_passthrough(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Symbols other than PAPER_MTF_DAILY_SYMBOL pass-through even when MTF on.
+        Prevents breaking paper trader tests for BTC/USDT fixtures."""
+        from paper import trader as t_mod
+        monkeypatch.setattr(t_mod, "PAPER_MTF_ENABLED", True)
+        monkeypatch.setattr(t_mod, "_fetch_daily_bias", lambda sym: ("long", 2))
+        # BTC/USDT (not the configured daily symbol) → pass-through
+        assert t_mod.check_mtf_filter("short", symbol="BTC/USDT") is True
+        # XAU/USD with matching bias → allow
+        assert t_mod.check_mtf_filter("long", symbol="XAU/USD") is True
+        # XAU/USD with mismatch → block
+        assert t_mod.check_mtf_filter("short", symbol="XAU/USD") is False
 
     def test_mtf_enabled_bias_match_allows(
         self, monkeypatch: pytest.MonkeyPatch
@@ -1143,10 +1158,100 @@ class TestMTFFilter:
         assert len(result) == 2
 
     def test_mtf_config_defaults(self) -> None:
-        """Config defaults: disabled, threshold1/2, XAU/USD symbol."""
+        """Config defaults: MTF enabled, thresholds 1/2, XAU/USD symbol."""
         import src.config as cfg
-        assert cfg.PAPER_MTF_ENABLED is False  # OFF by default
+        # v1.1.0+: MTF enabled by default (user wanted aggressive but safe).
+        # Opt-out via PAPER_MTF_ENABLED=false di .env
+        assert cfg.PAPER_MTF_ENABLED is True  # ON by default
         assert cfg.PAPER_MTF_DAILY_MIN_SCORE == 1
         assert cfg.PAPER_MTF_15M_MIN_SCORE == 2
         assert cfg.PAPER_MTF_DAILY_SYMBOL == "XAU/USD"
         assert cfg.PAPER_MTF_BIAS_CACHE_TTL > 0
+        # Tighter MTF stays opt-in
+        assert cfg.PAPER_MTF_TIGHT_ENABLED is False
+        assert cfg.PAPER_MTF_4H_MIN_SCORE == 1
+
+
+# --- Tighter MTF tests — v1.1.0+ adds 4H filter layer ---
+
+class TestTightMTFFilter:
+    """Test tighter MTF filter (1D + 4H aggregated + 15M) — best DD (1.92%)
+    in backtest but lowest trade count (6 trades in 60-day window)."""
+
+    def setup_method(self) -> None:
+        """Reset caches before each test."""
+        from paper.trader import _clear_daily_bias_cache, _clear_4h_bias_cache
+        _clear_daily_bias_cache()
+        _clear_4h_bias_cache()
+
+    def test_tight_disabled_default_passes_through(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """PAPER_MTF_TIGHT_ENABLED=False → pass-through, identical to Relaxed MTF."""
+        from paper import trader as t_mod
+        monkeypatch.setattr(t_mod, "PAPER_MTF_TIGHT_ENABLED", False)
+        # Mock 1D + 4H mocks won't even be called
+        assert t_mod.check_tight_mtf_filter("long", symbol="XAU/USD") is True
+        assert t_mod.check_tight_mtf_filter("short", symbol="BTC/USDT") is True
+
+    def test_tight_enabled_all_match_allows(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """All biases (1D + 4H) match trade direction → allow."""
+        from paper import trader as t_mod
+        monkeypatch.setattr(t_mod, "PAPER_MTF_TIGHT_ENABLED", True)
+        monkeypatch.setattr(t_mod, "_fetch_daily_bias", lambda sym: ("long", 2))
+        monkeypatch.setattr(t_mod, "_fetch_4h_bias", lambda sym: ("long", 2))
+        assert t_mod.check_tight_mtf_filter("long", symbol="XAU/USD") is True
+
+    def test_tight_enabled_4h_mismatch_blocks(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """1D long but 4H short → block (mismatch on 4H)."""
+        from paper import trader as t_mod
+        monkeypatch.setattr(t_mod, "PAPER_MTF_TIGHT_ENABLED", True)
+        monkeypatch.setattr(t_mod, "_fetch_daily_bias", lambda sym: ("long", 2))
+        monkeypatch.setattr(t_mod, "_fetch_4h_bias", lambda sym: ("short", 2))
+        assert t_mod.check_tight_mtf_filter("long", symbol="XAU/USD") is False
+
+    def test_tight_enabled_4h_none_blocks(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """4H bias unavailable → block (safer side)."""
+        from paper import trader as t_mod
+        monkeypatch.setattr(t_mod, "PAPER_MTF_TIGHT_ENABLED", True)
+        monkeypatch.setattr(t_mod, "_fetch_daily_bias", lambda sym: ("long", 2))
+        monkeypatch.setattr(t_mod, "_fetch_4h_bias", lambda sym: (None, 0))
+        assert t_mod.check_tight_mtf_filter("long", symbol="XAU/USD") is False
+
+    def test_tight_other_symbol_passthrough(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Non-configured symbols pass through tight MTF too."""
+        from paper import trader as t_mod
+        monkeypatch.setattr(t_mod, "PAPER_MTF_TIGHT_ENABLED", True)
+        # BTC/USDT: even if mocked bias returns 'short', long signal passes
+        assert t_mod.check_tight_mtf_filter("long", symbol="BTC/USDT") is True
+
+    def test_aggregate_1h_to_4h_reduces_rows(self) -> None:
+        """Verify _aggregate_1h_to_4h produces ~1/4 as many rows from 1H data."""
+        import pandas as pd
+        from paper.trader import _aggregate_1h_to_4h
+        # Build a 16-row 1H DataFrame
+        df = pd.DataFrame({
+            "timestamp": list(range(1000, 1016)),  # 16 timestamps
+            "open": [1.0] * 16,
+            "high": [2.0] * 16,
+            "low": [0.5] * 16,
+            "close": [1.5] * 16,
+            "volume": [100] * 16,
+            "confluence_direction": ["long"] * 16,
+            "confluence_score": [2] * 16,
+            "confluence_grade": ["valid"] * 16,
+        })
+        agg = _aggregate_1h_to_4h(df)
+        # 16 // 4 = 4 groups
+        assert len(agg) == 4
+        # Last value per group preserved
+        assert agg.iloc[-1]["timestamp"] == 1015
+        assert agg.iloc[-1]["close"] == 1.5

@@ -24,11 +24,13 @@ from src.config import (
     CONFLUENCE_MIN_VALID,
     PAPER_MAX_BARS_HOLD,
     PAPER_MONITOR_INTERVAL_SECONDS,
+    PAPER_MTF_4H_MIN_SCORE,
     PAPER_MTF_BIAS_CACHE_TTL,
     PAPER_MTF_DAILY_MIN_SCORE,
     PAPER_MTF_DAILY_SYMBOL,
     PAPER_MTF_ENABLED,
     PAPER_MTF_15M_MIN_SCORE,
+    PAPER_MTF_TIGHT_ENABLED,
     PAPER_RISK_PER_TRADE,
     PAPER_TP1_CLOSE_PCT,
     PAPER_TP1_HIT_BREAKEVEN,
@@ -117,10 +119,21 @@ def check_mtf_filter(trade_direction: str, symbol: str | None = None) -> bool:
       - daily bias None (skip — jangan buka trade saat bias unclear)
 
     Returns False (block) kalau daily bias != trade_direction.
+
+    Symbol-scoping: kalau `symbol != PAPER_MTF_DAILY_SYMBOL`, MTF pass-through
+    (filter hanya untuk symbol yang di-configure). Backtest validate XAU/USD only;
+    BTC/USDT test fixtures di-test dengan MTF off via monkeypatch anyway.
     """
     if not PAPER_MTF_ENABLED:
         return True
     sym = symbol or PAPER_MTF_DAILY_SYMBOL
+    # Only enforce filter for the configured daily symbol — other symbols
+    # pass through (MTF not configured for them yet).
+    if sym != PAPER_MTF_DAILY_SYMBOL:
+        logger.debug(
+            f"[MTF] skip filter for {sym}: MTF_DAILY_SYMBOL={PAPER_MTF_DAILY_SYMBOL}"
+        )
+        return True
     bias_dir, bias_score = _fetch_daily_bias(sym)
     if bias_dir is None:
         logger.info(
@@ -137,6 +150,173 @@ def check_mtf_filter(trade_direction: str, symbol: str | None = None) -> bool:
     logger.debug(
         f"[MTF] allow {trade_direction} {sym}: aligned with daily bias "
         f"({bias_dir}, score={bias_score})"
+    )
+    return True
+
+
+# --- Tighter MTF (v1.1.1) — adds 4H layer between 1D and 15M ---
+# Validated via backtest (/tmp/xauusd_mtf_tweaks_report.md):
+#   tight_4h: 6 trades, WR 66.7%, PF 2.33, DD 1.92% (best DD), PnL +$264
+# Strategy: 1D ≥ 1 + (1H ≥ 2 → aggregate to 4H) + 4H ≥ 1 + 15M ≥ 2,
+#   all biases must match trade direction.
+# 4H bias comes from Yahoo 1H data — Yahoo doesn't expose native 4h, so
+# we groupby 4 consecutive 1H bars into a synthetic 4H bar.
+
+# Separate in-memory cache for 4H bias (independent of daily cache).
+_4h_bias_cache: dict[str, tuple[float, str | None, int | None]] = {}
+
+
+def _aggregate_1h_to_4h(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Aggregate 1H OHLCV data into synthetic 4H bars.
+
+    Groups every 4 consecutive 1H bars into one 4H bar. Takes the LAST
+    value per group for OHLC + any pre-computed indicator columns (e.g.
+    confluence_direction, confluence_score, confluence_grade). This means
+    the 4H bias reflects the most recent 1H bar's indicator snapshot,
+    which is the most operationally useful representation for a
+    real-time filter.
+
+    Expects df to have integer ms-epoch `timestamp` column + OHLCV.
+    Returns a new DataFrame with len(df) // 4 rows (drops trailing
+    remainder).
+    """
+    import pandas as pd
+
+    if df is None or df.empty or len(df) < 4:
+        return df.iloc[0:0].copy() if df is not None else pd.DataFrame()
+
+    n_groups = len(df) // 4
+    trimmed = df.iloc[: n_groups * 4].copy()
+    # Integer position group (every group = exactly 4 rows since we trimmed).
+    group_id = (trimmed.index // 4)
+    agg = trimmed.groupby(group_id).agg(
+        timestamp=("timestamp", "last"),
+        open=("open", "last"),
+        high=("high", "last"),
+        low=("low", "last"),
+        close=("close", "last"),
+        volume=("volume", "last"),
+    )
+    # For any extra indicator/bias columns, take the last of each group
+    # so that downstream confluence_score picks up the most recent state.
+    extra_cols = [c for c in trimmed.columns if c not in agg.columns]
+    for col in extra_cols:
+        agg[col] = trimmed.groupby(group_id)[col].last()
+    agg = agg.reset_index(drop=True)
+    return agg
+
+
+def _fetch_4h_bias(symbol: str) -> tuple[str | None, int | None]:
+    """
+    Ambil 4H bias terkini (aggregate dari Yahoo 1H data).
+
+    Returns:
+        (direction, score) — direction adalah "long" / "short" / None.
+        score adalah confluence_score (0-4) di 4H bar terakhir.
+        None direction = tidak ada valid 4H bias (block trade).
+
+    Yahoo native 4H isn't supported; we fetch 1H (max 730d ≈ 17,520 bars)
+    then aggregate every 4 bars into 4H. Resulting history ≈ 4380 4H bars.
+    """
+    import time
+    import pandas as pd
+    from data.fetchers.yahoo_fetcher import YahooFinanceFetcher
+    from confluence.scorer import score_confluence
+
+    now = time.time()
+    cached = _4h_bias_cache.get(symbol)
+    if cached and (now - cached[0]) < PAPER_MTF_BIAS_CACHE_TTL:
+        return cached[1], cached[2]
+
+    try:
+        fetcher = YahooFinanceFetcher()
+        # 720 days of 1H bars ≈ 17,280 rows. Yahoo max for 1h is 730d.
+        df = fetcher.fetch_ohlcv(symbol, "1h", total_bars=17_500)
+        if df is None or df.empty or len(df) < 100:
+            logger.warning(f"[MTF-tight] insufficient 1H data for {symbol}")
+            return None, None
+        agg = _aggregate_1h_to_4h(df)
+        if agg is None or agg.empty or len(agg) < 20:
+            logger.warning(f"[MTF-tight] insufficient 4H aggregate for {symbol}")
+            return None, None
+        scored = score_confluence(agg)
+        last = scored.iloc[-1]
+        direction = last.get("confluence_direction")
+        score = int(last.get("confluence_score", 0) or 0)
+        grade = str(last.get("confluence_grade", ""))
+        if pd.isna(direction) or grade != "valid" or score < PAPER_MTF_4H_MIN_SCORE:
+            _4h_bias_cache[symbol] = (now, None, score)
+            return None, score
+        _4h_bias_cache[symbol] = (now, str(direction), score)
+        return str(direction), score
+    except Exception as e:
+        logger.error(f"[MTF-tight] 4H bias fetch failed for {symbol}: {e}")
+        return None, None
+
+
+def _clear_4h_bias_cache() -> None:
+    """Reset 4H bias cache — dipanggil di tests."""
+    _4h_bias_cache.clear()
+
+
+def check_tight_mtf_filter(
+    trade_direction: str, symbol: str | None = None
+) -> bool:
+    """
+    Tighter MTF filter — requires alignment across 1D + 1H (aggregated 4H) + 4H.
+
+    Strategy (from /tmp/xauusd_mtf_tweaks_report.md):
+        - 1D confluence ≥ 1 → trend bias
+        - 1H confluence ≥ 2 → alignment filter (we use 4H aggregate here)
+        - 4H confluence ≥ 1 → additional granularity
+        - 15M confluence ≥ 2 → entry trigger (checked elsewhere)
+
+    Returns True (allow) kalau:
+      - PAPER_MTF_TIGHT_ENABLED=False (default OFF, backward-compatible —
+        behaviour identical to Relaxed MTF when disabled)
+      - All three biases match trade_direction
+
+    Returns False (block) kalau any bias is None OR any bias mismatches.
+    \"safer\" because a missing 4H bias means either data is unavailable
+    or the 4H trend is unclear — both situations are bad entries.
+    """
+    if not PAPER_MTF_TIGHT_ENABLED:
+        return True
+    sym = symbol or PAPER_MTF_DAILY_SYMBOL
+    # Symbol-scoping: only enforce filter for the configured daily symbol.
+    if sym != PAPER_MTF_DAILY_SYMBOL:
+        logger.debug(
+            f"[MTF-tight] skip filter for {sym}: "
+            f"MTF_DAILY_SYMBOL={PAPER_MTF_DAILY_SYMBOL}"
+        )
+        return True
+    # 1D bias
+    d_dir, d_score = _fetch_daily_bias(sym)
+    if d_dir is None:
+        logger.info(
+            f"[MTF-tight] block {trade_direction} {sym}: no valid 1D bias "
+            f"(score={d_score})"
+        )
+        return False
+    # 4H bias (aggregated from 1H Yahoo data)
+    h4_dir, h4_score = _fetch_4h_bias(sym)
+    if h4_dir is None:
+        logger.info(
+            f"[MTF-tight] block {trade_direction} {sym}: no valid 4H bias "
+            f"(score={h4_score})"
+        )
+        return False
+    # All three must align (we re-check 1D here for symmetry / readability).
+    if d_dir != trade_direction or h4_dir != trade_direction:
+        logger.info(
+            f"[MTF-tight] block {trade_direction} {sym}: "
+            f"1D={d_dir}({d_score}) 4H={h4_dir}({h4_score})"
+        )
+        return False
+    logger.debug(
+        f"[MTF-tight] allow {trade_direction} {sym}: "
+        f"1D={d_dir}({d_score}) 4H={h4_dir}({h4_score})"
     )
     return True
 

@@ -9,6 +9,7 @@ is the primary fetcher. CryptoFetcher remains for backward compatibility
 from __future__ import annotations
 
 from .crypto_fetcher import CryptoFetcher, MultiExchangeFetcher
+from .xaus_fetcher import XAUSFetcher, XAUS_SYMBOL_MAP
 from .yahoo_fetcher import (
     YAHOO_INTERVALS,
     YAHOO_SYMBOL_MAP,
@@ -18,6 +19,8 @@ from .yahoo_fetcher import (
 __all__ = [
     "CryptoFetcher",
     "MultiExchangeFetcher",
+    "XAUSFetcher",
+    "XAUS_SYMBOL_MAP",
     "YahooFinanceFetcher",
     "YAHOO_SYMBOL_MAP",
     "YAHOO_INTERVALS",
